@@ -1,0 +1,147 @@
+{
+  "identity": {
+    "name": "E1 - The Future Terminal",
+    "tone": "Precision, Speed, Algorithmic Authority",
+    "core_philosophy": "Data is beautiful. The interface should feel like a specialized tool for an elite trader, not a generic SaaS dashboard.",
+    "theme_mode": "dark"
+  },
+  "typography": {
+    "headings": {
+      "family": "JetBrains Mono, monospace",
+      "weights": ["700", "800"],
+      "usage": "Page titles, Card headers, Metric values",
+      "google_font_url": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+    },
+    "body": {
+      "family": "Manrope, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage": "Navigation, Table data, Labels, Form inputs",
+      "google_font_url": "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&display=swap"
+    },
+    "rules": [
+      "Use JetBrains Mono for ALL numbers and financial data to ensure tabular alignment.",
+      "Headings must be uppercase with 'tracking-tight' if larger than 24px.",
+      "Labels (tiny text) must be uppercase with 'tracking-widest'."
+    ]
+  },
+  "colors": {
+    "palette": {
+      "background": "#050505",
+      "foreground": "#E5E5E5",
+      "card": "#0A0A0A",
+      "card_foreground": "#FFFFFF",
+      "popover": "#0A0A0A",
+      "popover_foreground": "#FFFFFF",
+      "primary": "#00E599",
+      "primary_foreground": "#000000",
+      "secondary": "#1A1A1A",
+      "secondary_foreground": "#FFFFFF",
+      "muted": "#1A1A1A",
+      "muted_foreground": "#737373",
+      "accent": "#262626",
+      "accent_foreground": "#FFFFFF",
+      "destructive": "#FF0055",
+      "destructive_foreground": "#FFFFFF",
+      "border": "#262626",
+      "input": "#1A1A1A",
+      "ring": "#00E599"
+    },
+    "semantic": {
+      "success": "#00E599",
+      "warning": "#FFB800",
+      "error": "#FF0055",
+      "info": "#00D8FF",
+      "profit_glow": "0 0 20px rgba(0, 229, 153, 0.3)",
+      "loss_glow": "0 0 20px rgba(255, 0, 85, 0.3)"
+    }
+  },
+  "layout_strategy": {
+    "type": "Bento Grid Mode B (High Density)",
+    "container_padding": "p-6 md:p-8",
+    "item_spacing": "gap-4",
+    "border_radius": "rounded-sm",
+    "glass_effect": "bg-black/40 backdrop-blur-xl border-white/5",
+    "grid_rules": [
+      "Dashboard must use CSS Grid.",
+      "Summary Cards: col-span-1",
+      "Main Chart: col-span-2 row-span-2",
+      "Activity Feed: col-span-1 row-span-2",
+      "Arbitrage Opportunities: col-span-full"
+    ]
+  },
+  "components": {
+    "Card": {
+      "style": "Flat background (#0A0A0A), 1px border (#262626), No shadow. Sharp edges (rounded-sm).",
+      "hover": "border-primary/50 transition-colors duration-300"
+    },
+    "Button": {
+      "style": "Tactical. Uppercase text. 'h-10 px-6 rounded-sm'.",
+      "variants": {
+        "default": "bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-[0_0_15px_rgba(0,229,153,0.4)]",
+        "outline": "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
+        "destructive": "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      }
+    },
+    "Input": {
+      "style": "bg-[#0F0F0F] border-border/50 focus:border-primary focus:ring-1 focus:ring-primary rounded-sm font-mono"
+    },
+    "Badge": {
+      "style": "rounded-full px-2 py-0.5 text-xs font-mono font-medium border border-transparent"
+    }
+  },
+  "visual_enhancers": {
+    "textures": [
+      {
+        "name": "Cyber Grid Background",
+        "url": "https://images.unsplash.com/photo-1767477665602-ab4e96be7701?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "usage": "Use as a subtle overlay on the main dashboard background with opacity-10 and blend-mode-overlay."
+      }
+    ],
+    "gradients": "Avoid full gradients. Use 'spotlight' gradients (radial) to highlight active areas.",
+    "icons": "Use 'lucide-react' with stroke-width={1.5}. For crypto icons, use the URLs provided."
+  },
+  "image_urls": {
+    "tokens": {
+      "BTC": "https://cryptologos.cc/logos/bitcoin-btc-logo.png",
+      "ETH": "https://cryptologos.cc/logos/ethereum-eth-logo.png",
+      "USDT": "https://cryptologos.cc/logos/tether-usdt-logo.png",
+      "BNB": "https://cryptologos.cc/logos/bnb-bnb-logo.png"
+    },
+    "exchanges": {
+      "Binance": "https://cryptologos.cc/logos/binance-coin-bnb-logo.png", 
+      "Gate.io": "https://cryptologos.cc/logos/gate-token-gt-logo.png", 
+      "Huobi": "https://cryptologos.cc/logos/htx-ht-logo.png"
+    }
+  },
+  "motion": {
+    "library": "framer-motion",
+    "transitions": "ease-out duration-200",
+    "interactions": {
+      "hover": "scale-[1.01]",
+      "tap": "scale-[0.98]",
+      "card_enter": "opacity-0 y-4 -> opacity-100 y-0 (staggered)"
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. INSTALLATION: Run `yarn add framer-motion lucide-react clsx tailwind-merge recharts`.",
+    "2. FONT SETUP: Import 'JetBrains Mono' and 'Manrope' in `index.css` from Google Fonts.",
+    "3. TAILWIND CONFIG: Update `tailwind.config.js` with the colors and fonts defined above. Set `fontFamily` defaults.",
+    "4. LAYOUT: Create a sidebar layout (fixed left nav, scrollable main content). The sidebar should be minimal (icons only on mobile, expanded on desktop).",
+    "5. CHARTS: Use `recharts`. Style the lines with `strokeWidth={2}` and `dot={false}`. Use gradients for the `AreaChart` fill.",
+    "6. ARBITRAGE CARD: This is the 'Hero' of the dashboard. Give it a special 'glow' border or a distinct background color (e.g., bg-primary/5) to make it pop.",
+    "7. ERROR STATES: Since this is a trading bot, error messages (API failure, Insufficient funds) must be highly visible (Destructive Toast + Red Border on Form).",
+    "8. DO NOT use gradients for text. Keep text solid for readability."
+  ],
+  "universal_guidelines": [
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy",
+    "Use glass-morphism effects with backdrop filters (12-24px blur)",
+    "You MUST NOT apply universal transition. Eg: `transition: all`. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms",
+    "You MUST NOT center align the app container, ie do not add `.App { text-align: center; }` in the css file. This disrupts the human natural reading flow of text",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style",
+    "NEVER: use AI assistant Emoji characters like 🤖 etc.",
+    "Main agent relies on these image URLs. Missing categories = main agent will use placeholder text which is FORBIDDEN",
+    "Use `sonner` for toasts. Located in `/app/src/components/ui/sonner.jsx`"
+  ]
+}

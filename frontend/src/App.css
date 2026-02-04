@@ -1,0 +1,185 @@
+.App {
+    min-height: 100vh;
+    background-color: #050505;
+}
+
+/* Sidebar styles */
+.sidebar {
+    background-color: #0A0A0A;
+    border-right: 1px solid #262626;
+}
+
+/* Card styles */
+.arb-card {
+    background-color: #0A0A0A;
+    border: 1px solid #262626;
+    transition: border-color 0.3s ease;
+}
+
+.arb-card:hover {
+    border-color: rgba(0, 229, 153, 0.5);
+}
+
+.arb-card.opportunity {
+    background: linear-gradient(135deg, rgba(0, 229, 153, 0.05) 0%, transparent 50%);
+    border-color: rgba(0, 229, 153, 0.3);
+}
+
+/* Exchange selector styles */
+.exchange-selector {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.exchange-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background-color: #1A1A1A;
+    border: 1px solid #262626;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.exchange-btn:hover {
+    background-color: #262626;
+    border-color: #333333;
+}
+
+.exchange-btn.selected {
+    background-color: rgba(0, 229, 153, 0.1);
+    border-color: #00E599;
+    color: #00E599;
+}
+
+.exchange-btn.selected-sell {
+    background-color: rgba(255, 0, 85, 0.1);
+    border-color: #FF0055;
+    color: #FF0055;
+}
+
+/* Stats card */
+.stat-card {
+    background-color: #0A0A0A;
+    border: 1px solid #262626;
+    padding: 1.5rem;
+    border-radius: 0.25rem;
+}
+
+.stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #737373;
+    margin-top: 0.25rem;
+}
+
+/* Input overrides */
+.input-dark {
+    background-color: #0F0F0F;
+    border-color: rgba(38, 38, 38, 0.5);
+    color: #E5E5E5;
+}
+
+.input-dark:focus {
+    border-color: #00E599;
+    outline: none;
+    box-shadow: 0 0 0 1px #00E599;
+}
+
+/* Button styles */
+.btn-primary {
+    background-color: #00E599;
+    color: #000000;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+    background-color: rgba(0, 229, 153, 0.9);
+    box-shadow: 0 0 15px rgba(0, 229, 153, 0.4);
+}
+
+.btn-destructive {
+    background-color: #FF0055;
+    color: #FFFFFF;
+}
+
+.btn-destructive:hover {
+    background-color: rgba(255, 0, 85, 0.9);
+    box-shadow: 0 0 15px rgba(255, 0, 85, 0.4);
+}
+
+/* Live indicator */
+.live-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #00E599;
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 5px #00E599;
+    }
+    50% {
+        opacity: 0.5;
+        box-shadow: 0 0 15px #00E599;
+    }
+}
+
+/* Table styles */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #737373;
+    border-bottom: 1px solid #262626;
+}
+
+.data-table td {
+    padding: 0.75rem 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.875rem;
+    border-bottom: 1px solid #1A1A1A;
+}
+
+.data-table tr:hover {
+    background-color: rgba(38, 38, 38, 0.3);
+}
+
+/* Profit/Loss colors */
+.text-profit {
+    color: #00E599;
+}
+
+.text-loss {
+    color: #FF0055;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+}

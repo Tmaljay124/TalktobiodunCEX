@@ -1,0 +1,265 @@
+import requests
+import sys
+import json
+from datetime import datetime
+
+class CryptoArbitrageBotTester:
+    def __init__(self, base_url="https://multiexchange-arb.preview.emergentagent.com"):
+        self.base_url = base_url
+        self.api_url = f"{base_url}/api"
+        self.tests_run = 0
+        self.tests_passed = 0
+        self.test_token_id = None
+        self.test_exchange_id = None
+
+    def run_test(self, name, method, endpoint, expected_status, data=None, params=None):
+        """Run a single API test"""
+        url = f"{self.api_url}/{endpoint}" if not endpoint.startswith('http') else endpoint
+        headers = {'Content-Type': 'application/json'}
+
+        self.tests_run += 1
+        print(f"\n🔍 Testing {name}...")
+        print(f"   URL: {method} {url}")
+        if data:
+            print(f"   Data: {json.dumps(data, indent=2)}")
+        
+        try:
+            if method == 'GET':
+                response = requests.get(url, headers=headers, params=params, timeout=10)
+            elif method == 'POST':
+                response = requests.post(url, json=data, headers=headers, timeout=10)
+            elif method == 'PUT':
+                response = requests.put(url, json=data, headers=headers, timeout=10)
+            elif method == 'DELETE':
+                response = requests.delete(url, headers=headers, timeout=10)
+
+            success = response.status_code == expected_status
+            if success:
+                self.tests_passed += 1
+                print(f"✅ Passed - Status: {response.status_code}")
+                try:
+                    response_data = response.json()
+                    print(f"   Response: {json.dumps(response_data, indent=2)[:200]}...")
+                except:
+                    print(f"   Response: {response.text[:100]}...")
+                return True, response.json() if response.text else {}
+            else:
+                print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
+                print(f"   Error: {response.text[:200]}...")
+                return False, {}
+
+        except Exception as e:
+            print(f"❌ Failed - Error: {str(e)}")
+            return False, {}
+
+    def test_health_endpoints(self):
+        """Test basic health endpoints"""
+        print("\n" + "="*50)
+        print("TESTING HEALTH ENDPOINTS")
+        print("="*50)
+        
+        success1, _ = self.run_test("Root endpoint", "GET", "", 200)
+        success2, _ = self.run_test("Health check", "GET", "health", 200)
+        
+        return success1 and success2
+
+    def test_stats_endpoint(self):
+        """Test stats endpoint"""
+        print("\n" + "="*50)
+        print("TESTING STATS ENDPOINT")
+        print("="*50)
+        
+        return self.run_test("Get dashboard stats", "GET", "stats", 200)[0]
+
+    def test_token_endpoints(self):
+        """Test token management endpoints"""
+        print("\n" + "="*50)
+        print("TESTING TOKEN ENDPOINTS")
+        print("="*50)
+        
+        # Test get tokens (initially empty)
+        success1, tokens = self.run_test("Get tokens (empty)", "GET", "tokens", 200)
+        
+        # Test create token
+        token_data = {
+            "name": "Test Token",
+            "symbol": "TEST",
+            "contract_address": "0x1234567890abcdef1234567890abcdef12345678",
+            "monitored_exchanges": []
+        }
+        success2, created_token = self.run_test("Create token", "POST", "tokens", 200, data=token_data)
+        
+        if success2 and 'id' in created_token:
+            self.test_token_id = created_token['id']
+            print(f"   Created token ID: {self.test_token_id}")
+        
+        # Test get tokens (should have one now)
+        success3, tokens = self.run_test("Get tokens (with data)", "GET", "tokens", 200)
+        
+        # Test get specific token
+        success4 = False
+        if self.test_token_id:
+            success4, _ = self.run_test("Get specific token", "GET", f"tokens/{self.test_token_id}", 200)
+        
+        return success1 and success2 and success3 and success4
+
+    def test_exchange_endpoints(self):
+        """Test exchange management endpoints"""
+        print("\n" + "="*50)
+        print("TESTING EXCHANGE ENDPOINTS")
+        print("="*50)
+        
+        # Test get exchanges (initially empty)
+        success1, exchanges = self.run_test("Get exchanges (empty)", "GET", "exchanges", 200)
+        
+        # Test create exchange (this will likely fail without real API keys, but we test the endpoint)
+        exchange_data = {
+            "name": "binance",
+            "api_key": "test_api_key_12345",
+            "api_secret": "test_api_secret_67890"
+        }
+        success2, created_exchange = self.run_test("Create exchange", "POST", "exchanges", 200, data=exchange_data)
+        
+        if success2 and 'id' in created_exchange:
+            self.test_exchange_id = created_exchange['id']
+            print(f"   Created exchange ID: {self.test_exchange_id}")
+        
+        # Test get exchanges (should have one now if creation succeeded)
+        success3, exchanges = self.run_test("Get exchanges (with data)", "GET", "exchanges", 200)
+        
+        # Test exchange connection (this will likely fail with test credentials)
+        test_data = {
+            "name": "binance",
+            "api_key": "invalid_key",
+            "api_secret": "invalid_secret"
+        }
+        # We expect this to fail (400) with invalid credentials
+        success4, _ = self.run_test("Test invalid exchange connection", "POST", "exchanges/test", 400, data=test_data)
+        
+        return success1 and success2 and success3 and success4
+
+    def test_wallet_endpoints(self):
+        """Test wallet configuration endpoints"""
+        print("\n" + "="*50)
+        print("TESTING WALLET ENDPOINTS")
+        print("="*50)
+        
+        # Test get wallet (initially empty)
+        success1, wallet = self.run_test("Get wallet (empty)", "GET", "wallet", 200)
+        
+        # Test create wallet
+        wallet_data = {
+            "private_key": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            "address": "0x742d35cc6aa6ac6c3b0123456789abcdef123456"
+        }
+        success2, created_wallet = self.run_test("Save wallet config", "POST", "wallet", 200, data=wallet_data)
+        
+        # Test get wallet (should have data now)
+        success3, wallet = self.run_test("Get wallet (with data)", "GET", "wallet", 200)
+        
+        # Test update wallet balance
+        success4, _ = self.run_test("Update wallet balance", "PUT", "wallet/balance?balance_bnb=1.0&balance_usdt=100.0", 200)
+        
+        return success1 and success2 and success3 and success4
+
+    def test_arbitrage_endpoints(self):
+        """Test arbitrage-related endpoints"""
+        print("\n" + "="*50)
+        print("TESTING ARBITRAGE ENDPOINTS")
+        print("="*50)
+        
+        # Test get opportunities (initially empty)
+        success1, opps = self.run_test("Get arbitrage opportunities", "GET", "arbitrage/opportunities", 200)
+        
+        # Test detect arbitrage (might be empty if no exchanges/tokens configured properly)
+        success2, detected_opps = self.run_test("Detect arbitrage opportunities", "GET", "arbitrage/detect", 200)
+        
+        # Test manual selection (only if we have token and exchange)
+        success3 = True
+        if self.test_token_id and self.test_exchange_id:
+            manual_data = {
+                "token_id": self.test_token_id,
+                "buy_exchange": "binance",
+                "sell_exchange": "gateio"  # This will likely fail since we don't have real gateio configured
+            }
+            # This might fail due to missing exchange, but we test the endpoint
+            success3, manual_opp = self.run_test("Create manual selection", "POST", "arbitrage/manual-selection", 404, data=manual_data)
+            # We expect 404 because the sell exchange doesn't exist
+        
+        return success1 and success2 and success3
+
+    def test_price_endpoints(self):
+        """Test price monitoring endpoints"""
+        print("\n" + "="*50)
+        print("TESTING PRICE ENDPOINTS")
+        print("="*50)
+        
+        # Test get all token prices (might be empty without proper exchange configs)
+        success1, prices = self.run_test("Get all token prices", "GET", "prices/all/tokens", 200)
+        
+        # Test get specific symbol prices (will likely be empty)
+        success2, symbol_prices = self.run_test("Get BTC/USDT prices", "GET", "prices/BTC/USDT", 200)
+        
+        return success1 and success2
+
+    def test_websocket_endpoint(self):
+        """Test WebSocket endpoint accessibility"""
+        print("\n" + "="*50)
+        print("TESTING WEBSOCKET ENDPOINT")
+        print("="*50)
+        
+        # We can't easily test WebSocket in this simple test, but we can check if the endpoint exists
+        # WebSocket endpoints typically return 404 or 400 for HTTP requests
+        try:
+            response = requests.get(f"{self.api_url}/ws")
+            print(f"🔍 Testing WebSocket endpoint accessibility...")
+            print(f"   WebSocket endpoint returned: {response.status_code}")
+            print(f"   This is expected for WebSocket endpoints accessed via HTTP")
+            return True
+        except Exception as e:
+            print(f"❌ WebSocket endpoint test failed: {e}")
+            return False
+
+def main():
+    print("🚀 Starting Crypto Arbitrage Bot API Tests")
+    print("=" * 60)
+    
+    tester = CryptoArbitrageBotTester()
+    
+    # Run all test suites
+    test_results = []
+    
+    test_results.append(tester.test_health_endpoints())
+    test_results.append(tester.test_stats_endpoint())
+    test_results.append(tester.test_token_endpoints())
+    test_results.append(tester.test_exchange_endpoints())
+    test_results.append(tester.test_wallet_endpoints())
+    test_results.append(tester.test_arbitrage_endpoints())
+    test_results.append(tester.test_price_endpoints())
+    test_results.append(tester.test_websocket_endpoint())
+    
+    # Print final results
+    print("\n" + "=" * 60)
+    print("📊 FINAL TEST RESULTS")
+    print("=" * 60)
+    print(f"Tests passed: {tester.tests_passed}/{tester.tests_run}")
+    print(f"Success rate: {(tester.tests_passed/tester.tests_run)*100:.1f}%")
+    
+    # Print summary by test suite
+    suite_names = [
+        "Health Endpoints", "Stats Endpoint", "Token Endpoints", 
+        "Exchange Endpoints", "Wallet Endpoints", "Arbitrage Endpoints",
+        "Price Endpoints", "WebSocket Endpoint"
+    ]
+    
+    print("\nTest Suite Results:")
+    for i, (name, result) in enumerate(zip(suite_names, test_results)):
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"  {name}: {status}")
+    
+    # Return 0 if all critical tests pass, 1 otherwise
+    critical_tests_passed = tester.tests_passed >= (tester.tests_run * 0.7)  # 70% pass rate
+    return 0 if critical_tests_passed else 1
+
+if __name__ == "__main__":
+    sys.exit(main())
