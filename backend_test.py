@@ -378,7 +378,8 @@ def main():
     test_results.append(tester.test_token_endpoints())
     test_results.append(tester.test_exchange_endpoints())
     test_results.append(tester.test_wallet_endpoints())  # Updated with new balance endpoint
-    test_results.append(tester.test_arbitrage_endpoints())
+    test_results.append(tester.test_arbitrage_endpoints())  # Updated with division by zero test
+    test_results.append(tester.test_activity_endpoint())  # New Activity API test
     test_results.append(tester.test_price_endpoints())
     test_results.append(tester.test_websocket_endpoint())
     
