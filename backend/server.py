@@ -1077,14 +1077,23 @@ async def execute_real_arbitrage(opportunity: dict, usdt_amount: float, slippage
 async def execute_simulated_arbitrage(opportunity: dict, usdt_amount: float) -> dict:
     """Execute simulated arbitrage (test mode)"""
     
+    # Validate prices
+    buy_price = opportunity.get('buy_price', 0)
+    sell_price = opportunity.get('sell_price', 0)
+    
+    if not buy_price or buy_price <= 0:
+        raise Exception("Cannot simulate: buy price is missing or zero")
+    if not sell_price or sell_price <= 0:
+        raise Exception("Cannot simulate: sell price is missing or zero")
+    
     # Simulate execution steps
     steps = [
         {"step": "validate_balance", "status": "completed", "details": {"usdt_amount": usdt_amount}},
         {"step": "deposit_to_buy_exchange", "status": "completed", "details": {"exchange": opportunity['buy_exchange']}},
-        {"step": "place_buy_order", "status": "completed", "details": {"price": opportunity['buy_price']}},
+        {"step": "place_buy_order", "status": "completed", "details": {"price": buy_price}},
         {"step": "withdraw_to_wallet", "status": "completed", "details": {}},
         {"step": "deposit_to_sell_exchange", "status": "completed", "details": {"exchange": opportunity['sell_exchange']}},
-        {"step": "place_sell_order", "status": "completed", "details": {"price": opportunity['sell_price']}},
+        {"step": "place_sell_order", "status": "completed", "details": {"price": sell_price}},
         {"step": "withdraw_profits", "status": "completed", "details": {}}
     ]
     
@@ -1099,10 +1108,10 @@ async def execute_simulated_arbitrage(opportunity: dict, usdt_amount: float) -> 
         )
     
     # Calculate simulated profit
-    token_amount = usdt_amount / opportunity['buy_price']
-    sell_value = token_amount * opportunity['sell_price']
+    token_amount = usdt_amount / buy_price
+    sell_value = token_amount * sell_price
     profit = sell_value - usdt_amount
-    profit_percent = (profit / usdt_amount) * 100
+    profit_percent = (profit / usdt_amount) * 100 if usdt_amount > 0 else 0
     
     return {
         "status": "completed",
