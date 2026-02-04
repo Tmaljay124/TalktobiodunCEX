@@ -33,7 +33,7 @@ export default function SettingsModal({ open, onOpenChange, settings, updateSett
   const [telegramTestStatus, setTelegramTestStatus] = useState(null);
 
   // Update local settings when prop changes
-  useState(() => {
+  useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
 
