@@ -1154,6 +1154,40 @@ async def get_trade_history(limit: int = 50):
     ).sort("detected_at", -1).to_list(limit)
     return trades
 
+@api_router.get("/activity")
+async def get_activity(limit: int = 100):
+    """Get all activity logs including trades and transaction logs"""
+    # Get all opportunities (completed, failed, executing)
+    opportunities = await db.arbitrage_opportunities.find(
+        {"status": {"$in": ["completed", "failed", "executing"]}},
+        {"_id": 0}
+    ).sort("detected_at", -1).to_list(limit)
+    
+    # Get all transaction logs
+    logs = await db.transaction_logs.find(
+        {},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(limit * 5)  # More logs per opportunity
+    
+    # Group logs by opportunity_id
+    logs_by_opportunity = {}
+    for log in logs:
+        opp_id = log.get('opportunity_id')
+        if opp_id not in logs_by_opportunity:
+            logs_by_opportunity[opp_id] = []
+        logs_by_opportunity[opp_id].append(log)
+    
+    # Combine opportunities with their logs
+    activity = []
+    for opp in opportunities:
+        opp_id = opp.get('id')
+        activity.append({
+            **opp,
+            "logs": logs_by_opportunity.get(opp_id, [])
+        })
+    
+    return activity
+
 # ============== WEBSOCKET ==============
 @api_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
