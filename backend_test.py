@@ -314,6 +314,36 @@ class CryptoArbitrageBotTester:
         
         return success1 and success2
 
+    def test_activity_endpoint(self):
+        """Test the new Activity API endpoint"""
+        print("\n" + "="*50)
+        print("TESTING ACTIVITY ENDPOINT (NEW)")
+        print("="*50)
+        
+        # Test GET /api/activity
+        success1, activity_data = self.run_test("Get activity logs", "GET", "activity", 200)
+        
+        if success1 and activity_data:
+            print(f"   Activity items returned: {len(activity_data)}")
+            
+            # Verify structure of activity data
+            if len(activity_data) > 0:
+                first_item = activity_data[0]
+                required_fields = ['id', 'token_symbol', 'buy_exchange', 'sell_exchange', 'status', 'logs']
+                
+                structure_valid = all(field in first_item for field in required_fields)
+                if structure_valid:
+                    print("✅ Activity data structure is correct")
+                    print(f"   Sample item has logs: {len(first_item.get('logs', []))} entries")
+                else:
+                    print("❌ Activity data structure missing required fields")
+                    print(f"   Expected fields: {required_fields}")
+                    print(f"   Actual fields: {list(first_item.keys())}")
+            else:
+                print("   No activity data found (expected if no trades executed)")
+        
+        return success1
+
     def test_websocket_endpoint(self):
         """Test WebSocket endpoint accessibility"""
         print("\n" + "="*50)
