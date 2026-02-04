@@ -59,7 +59,14 @@ class CryptoArbitrageBotTester:
         print("="*50)
         
         success1, _ = self.run_test("Root endpoint", "GET", "", 200)
-        success2, _ = self.run_test("Health check", "GET", "health", 200)
+        success2, health_data = self.run_test("Health check (new)", "GET", "health", 200)
+        
+        # Print health check details
+        if success2 and health_data:
+            print(f"   Mode: {health_data.get('mode', 'Unknown')}")
+            print(f"   BSC Mainnet: {health_data.get('bsc_mainnet_connected', False)}")
+            print(f"   BSC Testnet: {health_data.get('bsc_testnet_connected', False)}")
+            print(f"   Active Exchanges: {health_data.get('exchanges_active', 0)}")
         
         return success1 and success2
 
