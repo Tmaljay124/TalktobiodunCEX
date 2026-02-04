@@ -9,7 +9,9 @@ import {
   DollarSign,
   Loader2,
   X,
-  CheckCircle
+  CheckCircle,
+  AlertTriangle,
+  Shield
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,14 +24,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { API } from "@/App";
 
-export default function ArbitrageCard({ opportunity, index, setOpportunities, fetchData }) {
+export default function ArbitrageCard({ opportunity, index, setOpportunities, fetchData, settings }) {
   const [showExecuteModal, setShowExecuteModal] = useState(false);
   const [usdtAmount, setUsdtAmount] = useState(opportunity.recommended_usdt_amount?.toString() || "100");
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState(null);
+  const [confirmed, setConfirmed] = useState(false);
 
+  const isLiveMode = settings?.is_live_mode || false;
   const isProfitable = opportunity.spread_percent > 0;
   const confidenceColor = opportunity.confidence >= 90 ? "text-success" : 
                          opportunity.confidence >= 70 ? "text-warning" : "text-muted-foreground";
@@ -41,15 +46,23 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
       return;
     }
 
+    // Require confirmation for live mode
+    if (isLiveMode && !confirmed) {
+      toast.error("Please confirm that you understand the risks of live trading");
+      return;
+    }
+
     setIsExecuting(true);
     try {
       const response = await axios.post(`${API}/arbitrage/execute`, {
         opportunity_id: opportunity.id,
-        usdt_amount: amount
+        usdt_amount: amount,
+        confirmed: isLiveMode ? confirmed : true
       });
       
       setExecutionResult(response.data);
-      toast.success(`Arbitrage executed! Profit: $${response.data.profit.toFixed(4)}`);
+      const modeLabel = response.data.is_live ? "🔴 LIVE" : "🟡 TEST";
+      toast.success(`${modeLabel} Arbitrage executed! Profit: $${response.data.profit.toFixed(4)}`);
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Execution failed");
@@ -66,6 +79,12 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
     } catch (error) {
       toast.error("Failed to remove opportunity");
     }
+  };
+
+  const resetModal = () => {
+    setShowExecuteModal(false);
+    setExecutionResult(null);
+    setConfirmed(false);
   };
 
   return (
@@ -157,7 +176,9 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
               h-10 px-6 rounded-sm uppercase font-semibold
               ${opportunity.status === 'completed' 
                 ? 'bg-success/20 text-success border border-success/30' 
-                : 'bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-[0_0_15px_rgba(0,229,153,0.4)]'
+                : isLiveMode
+                  ? 'bg-red-500 text-white hover:bg-red-600 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-[0_0_15px_rgba(0,229,153,0.4)]'
               }
             `}
           >
@@ -174,7 +195,7 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
             ) : (
               <>
                 <Zap className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Execute
+                {isLiveMode ? 'Execute LIVE' : 'Execute TEST'}
               </>
             )}
           </Button>
@@ -182,24 +203,37 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
       </motion.div>
 
       {/* Execute Modal */}
-      <Dialog open={showExecuteModal} onOpenChange={setShowExecuteModal}>
+      <Dialog open={showExecuteModal} onOpenChange={resetModal}>
         <DialogContent className="bg-card border-border sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-mono text-lg uppercase tracking-tight flex items-center gap-2">
-              <Zap className="w-5 h-5 text-primary" />
+              <Zap className={`w-5 h-5 ${isLiveMode ? 'text-red-400' : 'text-primary'}`} />
               Execute Arbitrage
+              {isLiveMode && (
+                <Badge className="bg-red-500/20 text-red-400 border-red-500/30 ml-2">
+                  LIVE
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Confirm the USDT amount and execute the arbitrage
+              {isLiveMode 
+                ? 'Real orders will be placed on exchanges' 
+                : 'Simulated execution - no real orders'}
             </DialogDescription>
           </DialogHeader>
 
           {executionResult ? (
             <div className="space-y-4">
-              <div className="p-4 rounded-sm bg-success/10 border border-success/30">
+              <div className={`p-4 rounded-sm border ${
+                executionResult.is_live 
+                  ? 'bg-red-500/10 border-red-500/30' 
+                  : 'bg-success/10 border-success/30'
+              }`}>
                 <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="w-5 h-5 text-success" />
-                  <span className="font-semibold text-success">Execution Successful!</span>
+                  <CheckCircle className={`w-5 h-5 ${executionResult.is_live ? 'text-red-400' : 'text-success'}`} />
+                  <span className={`font-semibold ${executionResult.is_live ? 'text-red-400' : 'text-success'}`}>
+                    {executionResult.is_live ? 'Live Trade Completed!' : 'Test Execution Successful!'}
+                  </span>
                 </div>
                 <div className="space-y-2 font-mono text-sm">
                   <div className="flex justify-between">
@@ -220,13 +254,22 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
                       ${executionResult.profit.toFixed(4)} ({executionResult.profit_percent.toFixed(2)}%)
                     </span>
                   </div>
+                  {executionResult.buy_order_id && (
+                    <div className="flex justify-between pt-2 border-t border-border">
+                      <span className="text-muted-foreground">Buy Order ID:</span>
+                      <span className="text-white text-xs">{executionResult.buy_order_id}</span>
+                    </div>
+                  )}
+                  {executionResult.sell_order_id && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Sell Order ID:</span>
+                      <span className="text-white text-xs">{executionResult.sell_order_id}</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <Button
-                onClick={() => {
-                  setShowExecuteModal(false);
-                  setExecutionResult(null);
-                }}
+                onClick={resetModal}
                 className="w-full h-10 rounded-sm"
               >
                 Close
@@ -234,6 +277,21 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Live Mode Warning */}
+              {isLiveMode && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-3 rounded-sm bg-red-500/10 border border-red-500/30 flex items-start gap-2"
+                >
+                  <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-red-400">
+                    <p className="font-semibold mb-1">Live Trading Warning</p>
+                    <p>Real orders will be placed. Ensure you have sufficient funds on both exchanges.</p>
+                  </div>
+                </motion.div>
+              )}
+
               {/* Opportunity Summary */}
               <div className="p-3 rounded-sm bg-secondary/50 border border-border">
                 <div className="flex items-center justify-between mb-2">
@@ -278,10 +336,26 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
                 </div>
               </div>
 
+              {/* Live Mode Confirmation */}
+              {isLiveMode && (
+                <div className="flex items-start gap-3 p-3 rounded-sm bg-red-500/5 border border-red-500/20">
+                  <Checkbox
+                    id="confirm-live"
+                    checked={confirmed}
+                    onCheckedChange={(checked) => setConfirmed(checked)}
+                    className="mt-0.5"
+                  />
+                  <label htmlFor="confirm-live" className="text-xs text-red-400 cursor-pointer">
+                    I understand that this is a <strong>LIVE TRADE</strong> with real funds. 
+                    I have verified the exchange balances and accept full responsibility for this transaction.
+                  </label>
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 pt-2">
                 <Button
                   variant="outline"
-                  onClick={() => setShowExecuteModal(false)}
+                  onClick={resetModal}
                   className="h-10 px-6 rounded-sm"
                 >
                   Cancel
@@ -289,8 +363,12 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
                 <Button
                   data-testid="confirm-execute-btn"
                   onClick={handleExecute}
-                  disabled={isExecuting}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-6 rounded-sm uppercase font-semibold"
+                  disabled={isExecuting || (isLiveMode && !confirmed)}
+                  className={`h-10 px-6 rounded-sm uppercase font-semibold ${
+                    isLiveMode 
+                      ? 'bg-red-500 text-white hover:bg-red-600' 
+                      : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  }`}
                 >
                   {isExecuting ? (
                     <>
@@ -299,8 +377,12 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
                     </>
                   ) : (
                     <>
-                      <Zap className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                      Confirm Execute
+                      {isLiveMode ? (
+                        <Shield className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                      ) : (
+                        <Zap className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                      )}
+                      {isLiveMode ? 'Execute LIVE Trade' : 'Execute Test'}
                     </>
                   )}
                 </Button>
