@@ -10,7 +10,12 @@ import {
   Plus,
   Zap,
   AlertTriangle,
-  CheckCircle
+  CheckCircle,
+  Settings,
+  Bell,
+  Shield,
+  ToggleLeft,
+  ToggleRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +25,7 @@ import AddExchangeModal from "@/components/AddExchangeModal";
 import WalletModal from "@/components/WalletModal";
 import ArbitrageCard from "@/components/ArbitrageCard";
 import ManualSelectionModal from "@/components/ManualSelectionModal";
+import SettingsModal from "@/components/SettingsModal";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -46,18 +52,25 @@ export default function Dashboard({
   isLoading, 
   fetchData,
   fetchPrices,
-  detectArbitrage
+  detectArbitrage,
+  settings,
+  updateSettings
 }) {
   const [showAddToken, setShowAddToken] = useState(false);
   const [showAddExchange, setShowAddExchange] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [showManualSelection, setShowManualSelection] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await Promise.all([fetchData(), fetchPrices(), detectArbitrage()]);
     setIsRefreshing(false);
+  };
+
+  const handleModeToggle = async () => {
+    await updateSettings({ is_live_mode: !settings.is_live_mode });
   };
 
   // Get price data for a token
@@ -87,10 +100,52 @@ export default function Dashboard({
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Mode Toggle */}
+          <div 
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-sm cursor-pointer transition-all ${
+              settings.is_live_mode 
+                ? 'bg-red-500/20 border border-red-500/50' 
+                : 'bg-yellow-500/20 border border-yellow-500/50'
+            }`}
+            onClick={handleModeToggle}
+            data-testid="mode-toggle"
+          >
+            {settings.is_live_mode ? (
+              <>
+                <ToggleRight className="w-4 h-4 text-red-400" />
+                <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">Live Mode</span>
+              </>
+            ) : (
+              <>
+                <ToggleLeft className="w-4 h-4 text-yellow-400" />
+                <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Test Mode</span>
+              </>
+            )}
+          </div>
+          
+          {/* Telegram Status */}
+          {settings.telegram_enabled && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-blue-500/20 border border-blue-500/30">
+              <Bell className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-xs text-blue-400">TG</span>
+            </div>
+          )}
+          
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <div className="live-indicator" />
             <span className="uppercase tracking-wider">Live</span>
           </div>
+          
+          <Button 
+            data-testid="settings-btn"
+            variant="ghost" 
+            size="icon"
+            onClick={() => setShowSettings(true)}
+            className="h-9 w-9"
+          >
+            <Settings className="w-4 h-4" strokeWidth={1.5} />
+          </Button>
+          
           <Button 
             data-testid="refresh-btn"
             variant="outline" 
@@ -104,6 +159,23 @@ export default function Dashboard({
           </Button>
         </div>
       </div>
+
+      {/* Live Mode Warning Banner */}
+      {settings.is_live_mode && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-500/10 border border-red-500/30 rounded-sm p-4 flex items-center gap-3"
+        >
+          <Shield className="w-5 h-5 text-red-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-red-400">Live Trading Mode Active</p>
+            <p className="text-xs text-red-400/80">
+              Real orders will be placed on exchanges. Ensure you have sufficient funds and understand the risks.
+            </p>
+          </div>
+        </motion.div>
+      )}
 
       {/* Stats Grid */}
       <motion.div 
@@ -245,6 +317,7 @@ export default function Dashboard({
                   index={index}
                   setOpportunities={setOpportunities}
                   fetchData={fetchData}
+                  settings={settings}
                 />
               ))}
             </div>
@@ -367,6 +440,7 @@ export default function Dashboard({
         onOpenChange={setShowWallet}
         wallet={stats.wallet}
         fetchData={fetchData}
+        settings={settings}
       />
       <ManualSelectionModal
         open={showManualSelection}
@@ -374,6 +448,12 @@ export default function Dashboard({
         tokens={tokens}
         exchanges={exchanges}
         setOpportunities={setOpportunities}
+      />
+      <SettingsModal
+        open={showSettings}
+        onOpenChange={setShowSettings}
+        settings={settings}
+        updateSettings={updateSettings}
       />
     </div>
   );
