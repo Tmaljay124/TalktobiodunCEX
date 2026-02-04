@@ -5,6 +5,7 @@ import axios from "axios";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import Dashboard from "@/components/Dashboard";
+import Activity from "@/components/Activity";
 import Sidebar from "@/components/Sidebar";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
