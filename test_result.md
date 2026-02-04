@@ -156,11 +156,11 @@ backend:
 
   - task: "Real Order Execution"
     implemented: true
-    working: false
+    working: true
     file: "server.py"
     stuck_count: 1
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
@@ -168,6 +168,21 @@ backend:
       - working: false
         agent: "testing"
         comment: "❌ FAIL - Arbitrage execution fails with 'float division by zero' error. Root cause: manual arbitrage opportunities have buy_price=0.0 because exchanges lack valid API keys for price fetching. The simulate_arbitrage function tries to divide usdt_amount by buy_price at line 1094. Need to add validation to prevent execution when prices are 0."
+      - working: true
+        agent: "main"
+        comment: "Fixed division by zero bug. Added validation at lines 869-875 in execute_arbitrage endpoint and lines 1080-1087 in execute_simulated_arbitrage function. Now prevents execution when buy_price or sell_price is 0 or missing, returning proper error message."
+
+  - task: "Activity Page API"
+    implemented: true
+    working: "NA"
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added GET /api/activity endpoint that returns all arbitrage opportunities (completed, failed, executing) with their associated transaction logs. Combines opportunities with grouped logs by opportunity_id."
 
 frontend:
   - task: "Settings Modal"
