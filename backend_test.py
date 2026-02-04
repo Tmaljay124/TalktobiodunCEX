@@ -284,10 +284,12 @@ def main():
     test_results = []
     
     test_results.append(tester.test_health_endpoints())
+    test_results.append(tester.test_settings_endpoints())  # New
+    test_results.append(tester.test_telegram_endpoints())  # New  
     test_results.append(tester.test_stats_endpoint())
     test_results.append(tester.test_token_endpoints())
     test_results.append(tester.test_exchange_endpoints())
-    test_results.append(tester.test_wallet_endpoints())
+    test_results.append(tester.test_wallet_endpoints())  # Updated with new balance endpoint
     test_results.append(tester.test_arbitrage_endpoints())
     test_results.append(tester.test_price_endpoints())
     test_results.append(tester.test_websocket_endpoint())
