@@ -54,7 +54,9 @@ export default function Dashboard({
   fetchPrices,
   detectArbitrage,
   settings,
-  updateSettings
+  updateSettings,
+  activePage,
+  setActivePage
 }) {
   const [showAddToken, setShowAddToken] = useState(false);
   const [showAddExchange, setShowAddExchange] = useState(false);
@@ -62,6 +64,20 @@ export default function Dashboard({
   const [showManualSelection, setShowManualSelection] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Handle navigation-triggered modals
+  useEffect(() => {
+    if (activePage === "wallet") {
+      setShowWallet(true);
+      setActivePage("dashboard"); // Reset to dashboard after opening modal
+    } else if (activePage === "tokens") {
+      setShowAddToken(true);
+      setActivePage("dashboard");
+    } else if (activePage === "exchanges") {
+      setShowAddExchange(true);
+      setActivePage("dashboard");
+    }
+  }, [activePage, setActivePage]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
