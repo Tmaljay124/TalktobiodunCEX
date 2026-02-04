@@ -233,6 +233,18 @@ frontend:
         agent: "main"
         comment: "Added refresh balance button that fetches real BSC balance"
 
+  - task: "Activity Page Component"
+    implemented: true
+    working: "NA"
+    file: "Activity.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Created Activity.jsx component that displays all arbitrage execution history with transaction logs. Shows stats (completed, failed, in progress), and expandable accordion items with detailed step-by-step logs. Integrated into App.js routing based on activePage state."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
