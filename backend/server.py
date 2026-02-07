@@ -1343,7 +1343,7 @@ async def wait_for_deposit_credit(
     try:
         initial_balance = await exchange.fetch_balance()
         initial_amount = initial_balance.get(token, {}).get('free', 0)
-    except:
+    except Exception:
         initial_amount = 0
     
     start_time = time.time()
