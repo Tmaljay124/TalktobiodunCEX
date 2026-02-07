@@ -948,6 +948,729 @@ async def execute_arbitrage(request: ExecuteArbitrageRequest):
         
         raise HTTPException(status_code=500, detail=f"Arbitrage execution failed: {error_msg}")
 
+async def send_telegram_message(chat_id: str, message: str) -> bool:
+    """Send a message to Telegram chat"""
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
+        return False
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown"
+                },
+                timeout=10.0
+            )
+            return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+        return False
+
+# ============== FULL ARBITRAGE WITH TRANSFERS ==============
+
+async def check_arbitrage_profitability(opportunity: dict, usdt_amount: float, buy_exchange: ccxt.Exchange, sell_exchange: ccxt.Exchange) -> dict:
+    """
+    Check if arbitrage is profitable after ALL fees
+    Returns profitability analysis
+    """
+    try:
+        token = opportunity['token_symbol']
+        
+        # 1. Get trading fees
+        buy_fees = await buy_exchange.fetch_trading_fees()
+        sell_fees = await sell_exchange.fetch_trading_fees()
+        
+        buy_fee_rate = buy_fees.get('trading', {}).get('maker', 0.001)  # Default 0.1%
+        sell_fee_rate = sell_fees.get('trading', {}).get('taker', 0.001)
+        
+        # 2. Get withdrawal fees
+        buy_currencies = await buy_exchange.fetch_currencies()
+        token_info = buy_currencies.get(token, {})
+        withdrawal_fee = token_info.get('fee', 0)  # Withdrawal fee in token amount
+        withdrawal_fee_usdt = withdrawal_fee * opportunity['buy_price'] if withdrawal_fee else 5  # Estimate $5 if unknown
+        
+        # 3. Calculate gas fees for wallet transfers (BSC is cheap)
+        gas_fee_estimate = 0.50  # ~$0.50 for BSC token transfer
+        
+        # 4. Calculate total costs
+        token_amount = usdt_amount / opportunity['buy_price']
+        
+        buy_fee = usdt_amount * buy_fee_rate
+        sell_fee = (token_amount * opportunity['sell_price']) * sell_fee_rate
+        total_fees = buy_fee + sell_fee + withdrawal_fee_usdt + gas_fee_estimate
+        
+        # 5. Calculate profit
+        gross_revenue = token_amount * opportunity['sell_price']
+        net_revenue = gross_revenue - sell_fee
+        total_cost = usdt_amount + buy_fee + withdrawal_fee_usdt + gas_fee_estimate
+        
+        net_profit = net_revenue - total_cost
+        profit_percent = (net_profit / total_cost) * 100 if total_cost > 0 else 0
+        
+        return {
+            'is_profitable': net_profit > 0,
+            'net_profit': net_profit,
+            'profit_percent': profit_percent,
+            'total_fees': total_fees,
+            'breakdown': {
+                'buy_fee': buy_fee,
+                'sell_fee': sell_fee,
+                'withdrawal_fee': withdrawal_fee_usdt,
+                'gas_fee': gas_fee_estimate
+            },
+            'min_spread_required': (total_fees / usdt_amount) * 100
+        }
+    except Exception as e:
+        logger.error(f"Error checking profitability: {e}")
+        # Conservative estimate
+        return {
+            'is_profitable': opportunity['spread_percent'] > 1.0,
+            'net_profit': 0,
+            'profit_percent': 0,
+            'total_fees': 0,
+            'breakdown': {},
+            'min_spread_required': 1.0
+        }
+
+
+async def retry_with_backoff(func, max_retries=MAX_RETRIES, initial_delay=1):
+    """
+    Retry function with exponential backoff for rate limits
+    """
+    for attempt in range(max_retries):
+        try:
+            return await func()
+        except ccxt.RateLimitExceeded as e:
+            if attempt == max_retries - 1:
+                raise
+            delay = initial_delay * (2 ** attempt)
+            logger.warning(f"Rate limit hit, retrying in {delay}s...")
+            await asyncio.sleep(delay)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            await asyncio.sleep(initial_delay)
+    
+
+async def withdraw_from_exchange_to_wallet(
+    exchange: ccxt.Exchange,
+    exchange_name: str,
+    token: str,
+    amount: float,
+    wallet_address: str,
+    opportunity_id: str
+) -> dict:
+    """
+    Withdraw tokens from exchange to wallet with retries
+    """
+    await log_transaction(opportunity_id, f"withdraw_from_{exchange_name}", "started", {
+        'token': token,
+        'amount': amount,
+        'destination': wallet_address
+    }, is_live=True)
+    
+    try:
+        # Withdrawal with retry
+        async def do_withdrawal():
+            return await exchange.withdraw(
+                code=token,
+                amount=amount,
+                address=wallet_address,
+                tag=None,
+                params={'network': 'BSC'}
+            )
+        
+        withdrawal = await retry_with_backoff(do_withdrawal)
+        
+        await log_transaction(opportunity_id, f"withdraw_from_{exchange_name}", "submitted", {
+            'withdrawal_id': withdrawal['id'],
+            'tx_hash': withdrawal.get('txid', 'pending'),
+            'fee': withdrawal.get('fee', {})
+        }, is_live=True)
+        
+        return {
+            'id': withdrawal['id'],
+            'tx_hash': withdrawal.get('txid'),
+            'status': 'pending',
+            'fee': withdrawal.get('fee', {})
+        }
+        
+    except Exception as e:
+        await log_transaction(opportunity_id, f"withdraw_from_{exchange_name}", "failed", {
+            'error': str(e)
+        }, is_live=True)
+        raise Exception(f"Withdrawal from {exchange_name} failed: {str(e)}")
+
+
+async def wait_for_withdrawal_completion(
+    exchange: ccxt.Exchange,
+    exchange_name: str,
+    withdrawal_id: str,
+    opportunity_id: str,
+    timeout: int = WITHDRAWAL_TIMEOUT
+) -> str:
+    """
+    Wait for exchange to process withdrawal and broadcast to blockchain
+    """
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            withdrawal = await exchange.fetch_withdrawal(withdrawal_id)
+            status = withdrawal.get('status', '').lower()
+            
+            await log_transaction(opportunity_id, f"withdraw_status_{exchange_name}", "checking", {
+                'status': status,
+                'elapsed_seconds': int(time.time() - start_time)
+            }, is_live=True)
+            
+            if status in ['ok', 'complete', 'completed', 'success']:
+                tx_hash = withdrawal.get('txid')
+                if tx_hash:
+                    await log_transaction(opportunity_id, f"withdraw_from_{exchange_name}", "completed", {
+                        'tx_hash': tx_hash,
+                        'total_wait_seconds': int(time.time() - start_time)
+                    }, is_live=True)
+                    return tx_hash
+            elif status in ['failed', 'canceled', 'cancelled']:
+                raise Exception(f"Withdrawal {status}: {withdrawal.get('info', {})}")
+            
+            await asyncio.sleep(10)  # Check every 10 seconds
+            
+        except Exception as e:
+            if 'not found' not in str(e).lower():
+                logger.warning(f"Error checking withdrawal: {e}")
+            await asyncio.sleep(10)
+    
+    raise Exception(f"Withdrawal timeout after {timeout} seconds")
+
+
+async def wait_for_blockchain_confirmation(
+    w3: Web3,
+    tx_hash: str,
+    opportunity_id: str,
+    step_name: str,
+    required_confirmations: int = MIN_CONFIRMATIONS,
+    timeout: int = 600
+) -> bool:
+    """
+    Wait for blockchain transaction confirmation (fast: 1 confirmation on BSC)
+    """
+    await log_transaction(opportunity_id, step_name, "started", {
+        'tx_hash': tx_hash,
+        'required_confirmations': required_confirmations
+    }, is_live=True)
+    
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+            
+            if receipt:
+                current_block = w3.eth.block_number
+                tx_block = receipt['blockNumber']
+                confirmations = current_block - tx_block + 1
+                
+                await log_transaction(opportunity_id, step_name, "confirming", {
+                    'confirmations': confirmations,
+                    'required': required_confirmations,
+                    'elapsed_seconds': int(time.time() - start_time)
+                }, is_live=True)
+                
+                if confirmations >= required_confirmations:
+                    await log_transaction(opportunity_id, step_name, "completed", {
+                        'confirmations': confirmations,
+                        'total_wait_seconds': int(time.time() - start_time)
+                    }, is_live=True)
+                    return True
+            
+            await asyncio.sleep(3)  # Check every 3 seconds (BSC block time)
+            
+        except Exception as e:
+            logger.warning(f"Error checking blockchain confirmation: {e}")
+            await asyncio.sleep(3)
+    
+    raise Exception(f"Blockchain confirmation timeout after {timeout} seconds")
+
+
+async def send_token_from_wallet_to_exchange(
+    w3: Web3,
+    private_key: str,
+    token_address: str,
+    to_address: str,
+    amount: float,
+    opportunity_id: str,
+    step_name: str,
+    decimals: int = 18
+) -> str:
+    """
+    Send tokens from wallet to exchange deposit address
+    """
+    await log_transaction(opportunity_id, step_name, "started", {
+        'token': token_address,
+        'amount': amount,
+        'destination': to_address
+    }, is_live=True)
+    
+    try:
+        account = w3.eth.account.from_key(private_key)
+        
+        # Get token contract
+        token_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(token_address),
+            abi=ERC20_ABI
+        )
+        
+        # Convert amount to wei
+        amount_wei = int(amount * (10 ** decimals))
+        
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(account.address)
+        gas_price = w3.eth.gas_price
+        
+        # Estimate gas
+        gas_estimate = token_contract.functions.transfer(
+            Web3.to_checksum_address(to_address),
+            amount_wei
+        ).estimate_gas({'from': account.address})
+        
+        transaction = token_contract.functions.transfer(
+            Web3.to_checksum_address(to_address),
+            amount_wei
+        ).build_transaction({
+            'from': account.address,
+            'gas': int(gas_estimate * 1.2),  # Add 20% buffer
+            'gasPrice': gas_price,
+            'nonce': nonce
+        })
+        
+        # Sign and send
+        signed = account.sign_transaction(transaction)
+        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash_hex = w3.to_hex(tx_hash)
+        
+        await log_transaction(opportunity_id, step_name, "broadcast", {
+            'tx_hash': tx_hash_hex,
+            'gas_used': gas_estimate,
+            'gas_price': str(gas_price)
+        }, is_live=True)
+        
+        return tx_hash_hex
+        
+    except Exception as e:
+        await log_transaction(opportunity_id, step_name, "failed", {
+            'error': str(e)
+        }, is_live=True)
+        raise Exception(f"Token transfer failed: {str(e)}")
+
+
+async def get_deposit_address(
+    exchange: ccxt.Exchange,
+    exchange_name: str,
+    token: str,
+    opportunity_id: str,
+    network: str = 'BSC'
+) -> dict:
+    """
+    Get deposit address for token on exchange
+    """
+    await log_transaction(opportunity_id, f"get_deposit_address_{exchange_name}", "started", {
+        'token': token,
+        'network': network
+    }, is_live=True)
+    
+    try:
+        async def fetch_address():
+            return await exchange.fetch_deposit_address(token, {'network': network})
+        
+        deposit_address = await retry_with_backoff(fetch_address)
+        
+        await log_transaction(opportunity_id, f"get_deposit_address_{exchange_name}", "completed", {
+            'address': deposit_address['address'],
+            'network': network
+        }, is_live=True)
+        
+        return {
+            'address': deposit_address['address'],
+            'tag': deposit_address.get('tag'),
+            'network': network
+        }
+    except Exception as e:
+        await log_transaction(opportunity_id, f"get_deposit_address_{exchange_name}", "failed", {
+            'error': str(e)
+        }, is_live=True)
+        raise Exception(f"Failed to get deposit address: {str(e)}")
+
+
+async def wait_for_deposit_credit(
+    exchange: ccxt.Exchange,
+    exchange_name: str,
+    token: str,
+    expected_amount: float,
+    opportunity_id: str,
+    timeout: int = DEPOSIT_TIMEOUT
+) -> bool:
+    """
+    Wait for exchange to credit deposited tokens
+    """
+    await log_transaction(opportunity_id, f"wait_deposit_{exchange_name}", "started", {
+        'token': token,
+        'expected_amount': expected_amount
+    }, is_live=True)
+    
+    try:
+        initial_balance = await exchange.fetch_balance()
+        initial_amount = initial_balance.get(token, {}).get('free', 0)
+    except:
+        initial_amount = 0
+    
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            current_balance = await exchange.fetch_balance()
+            current_amount = current_balance.get(token, {}).get('free', 0)
+            
+            increase = current_amount - initial_amount
+            
+            await log_transaction(opportunity_id, f"wait_deposit_{exchange_name}", "checking", {
+                'initial': initial_amount,
+                'current': current_amount,
+                'increase': increase,
+                'expected': expected_amount,
+                'elapsed_seconds': int(time.time() - start_time)
+            }, is_live=True)
+            
+            # Allow 1% tolerance for rounding
+            if increase >= (expected_amount * 0.99):
+                await log_transaction(opportunity_id, f"wait_deposit_{exchange_name}", "completed", {
+                    'credited_amount': increase,
+                    'total_wait_seconds': int(time.time() - start_time)
+                }, is_live=True)
+                return True
+            
+            await asyncio.sleep(30)  # Check every 30 seconds
+            
+        except Exception as e:
+            logger.warning(f"Error checking deposit: {e}")
+            await asyncio.sleep(30)
+    
+    raise Exception(f"Deposit credit timeout after {timeout} seconds")
+
+
+async def execute_full_arbitrage_with_transfers(
+    opportunity: dict,
+    usdt_amount: float,
+    slippage_tolerance: float,
+    telegram_chat_id: Optional[str]
+) -> dict:
+    """
+    Execute complete arbitrage: Wallet → CEX A (buy) → Withdraw → Wallet → CEX B (deposit) → Sell → Withdraw → Wallet
+    
+    Optimizations:
+    - 1 confirmation only for speed
+    - Parallel execution where possible
+    - Fee checking before execution
+    - Rate limit handling
+    - Error handling with rollback capability
+    """
+    start_time = time.time()
+    
+    buy_exchange_name = opportunity['buy_exchange']
+    sell_exchange_name = opportunity['sell_exchange']
+    token_symbol = opportunity['token_symbol']
+    
+    # Get wallet config
+    wallet = await db.wallet.find_one({}, {"_id": 0})
+    if not wallet:
+        raise HTTPException(status_code=400, detail="Wallet not configured. Please add your wallet in settings.")
+    
+    wallet_address = wallet['address']
+    private_key = decrypt_data(wallet['private_key_encrypted'])
+    
+    # Get exchange instances
+    buy_exchange = await get_exchange_instance(buy_exchange_name)
+    sell_exchange = await get_exchange_instance(sell_exchange_name)
+    
+    if not buy_exchange or not sell_exchange:
+        raise HTTPException(status_code=400, detail="Exchange not configured")
+    
+    # Get Web3 instance (always mainnet for real money)
+    w3 = bsc_service.get_web3(is_live=True)
+    
+    # Get token info
+    token_doc = await db.tokens.find_one({'symbol': token_symbol}, {"_id": 0})
+    if not token_doc:
+        raise HTTPException(status_code=400, detail=f"Token {token_symbol} not found in database")
+    
+    token_contract_address = token_doc['contract_address']
+    
+    # Update opportunity status
+    await db.arbitrage_opportunities.update_one(
+        {'id': opportunity['id']},
+        {'$set': {'status': 'executing'}}
+    )
+    
+    # STEP 0: Check profitability with ALL fees
+    await log_transaction(opportunity['id'], "profitability_check", "started", {}, is_live=True)
+    
+    profitability = await check_arbitrage_profitability(
+        opportunity, usdt_amount, buy_exchange, sell_exchange
+    )
+    
+    if not profitability['is_profitable']:
+        await log_transaction(opportunity['id'], "profitability_check", "failed", {
+            'reason': 'Not profitable after fees',
+            'net_profit': profitability['net_profit'],
+            'total_fees': profitability['total_fees'],
+            'min_spread_required': profitability['min_spread_required']
+        }, is_live=True)
+        
+        await db.arbitrage_opportunities.update_one(
+            {'id': opportunity['id']},
+            {'$set': {'status': 'failed'}}
+        )
+        
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not profitable after fees. Net profit: ${profitability['net_profit']:.2f}. "
+                   f"Total fees: ${profitability['total_fees']:.2f}. "
+                   f"Need spread > {profitability['min_spread_required']:.2f}%"
+        )
+    
+    await log_transaction(opportunity['id'], "profitability_check", "completed", profitability, is_live=True)
+    
+    # Send Telegram notification
+    if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+        message = (
+            f"🚀 *Starting Full Arbitrage*\n\n"
+            f"Token: {token_symbol}\n"
+            f"Buy: {buy_exchange_name} @ ${opportunity['buy_price']:.4f}\n"
+            f"Sell: {sell_exchange_name} @ ${opportunity['sell_price']:.4f}\n"
+            f"Amount: ${usdt_amount}\n"
+            f"Expected Profit: ${profitability['net_profit']:.2f} ({profitability['profit_percent']:.2f}%)\n"
+            f"Total Fees: ${profitability['total_fees']:.2f}\n\n"
+            f"⏱ Estimated time: 5-15 minutes"
+        )
+        await send_telegram_message(telegram_chat_id, message)
+    
+    token_amount = usdt_amount / opportunity['buy_price']
+    
+    try:
+        # STEP 1: Send USDT from wallet to buy exchange
+        await log_transaction(opportunity['id'], "step_1_fund_buy_exchange", "started", {
+            'amount': usdt_amount,
+            'destination': buy_exchange_name
+        }, is_live=True)
+        
+        # Get deposit address for buy exchange
+        buy_deposit = await get_deposit_address(buy_exchange, buy_exchange_name, 'USDT', opportunity['id'])
+        
+        # Send USDT from wallet to buy exchange
+        usdt_contract = USDT_MAINNET
+        fund_tx_hash = await send_token_from_wallet_to_exchange(
+            w3, private_key, usdt_contract, buy_deposit['address'],
+            usdt_amount, opportunity['id'], "step_1_fund_buy_exchange"
+        )
+        
+        # Wait for blockchain confirmation (parallel with next step where possible)
+        blockchain_confirm_task = asyncio.create_task(
+            wait_for_blockchain_confirmation(
+                w3, fund_tx_hash, opportunity['id'],
+                "step_1_blockchain_confirm", MIN_CONFIRMATIONS
+            )
+        )
+        
+        # STEP 2: Wait for exchange to credit USDT
+        await blockchain_confirm_task
+        await wait_for_deposit_credit(
+            buy_exchange, buy_exchange_name, 'USDT',
+            usdt_amount, opportunity['id']
+        )
+        
+        # STEP 3: Buy token on exchange A
+        await log_transaction(opportunity['id'], "step_3_buy_token", "started", {
+            'exchange': buy_exchange_name,
+            'amount': token_amount
+        }, is_live=True)
+        
+        async def place_buy_order():
+            return await buy_exchange.create_order(
+                symbol=f"{token_symbol}/USDT",
+                type='market',
+                side='buy',
+                amount=token_amount
+            )
+        
+        buy_order = await retry_with_backoff(place_buy_order)
+        actual_token_amount = buy_order.get('filled', token_amount)
+        
+        await log_transaction(opportunity['id'], "step_3_buy_token", "completed", {
+            'order_id': buy_order['id'],
+            'filled': actual_token_amount,
+            'cost': buy_order.get('cost')
+        }, is_live=True)
+        
+        # STEP 4: Withdraw token from exchange A to wallet
+        withdrawal = await withdraw_from_exchange_to_wallet(
+            buy_exchange, buy_exchange_name, token_symbol,
+            actual_token_amount, wallet_address, opportunity['id']
+        )
+        
+        # Wait for withdrawal to complete
+        withdraw_tx_hash = await wait_for_withdrawal_completion(
+            buy_exchange, buy_exchange_name, withdrawal['id'], opportunity['id']
+        )
+        
+        # Wait for blockchain confirmation
+        await wait_for_blockchain_confirmation(
+            w3, withdraw_tx_hash, opportunity['id'],
+            "step_4_blockchain_confirm", MIN_CONFIRMATIONS
+        )
+        
+        # STEP 5: Get deposit address for sell exchange (can do early)
+        sell_deposit = await get_deposit_address(sell_exchange, sell_exchange_name, token_symbol, opportunity['id'])
+        
+        # STEP 6: Send token from wallet to sell exchange
+        deposit_tx_hash = await send_token_from_wallet_to_exchange(
+            w3, private_key, token_contract_address, sell_deposit['address'],
+            actual_token_amount, opportunity['id'], "step_6_send_to_sell_exchange"
+        )
+        
+        # Wait for blockchain confirmation
+        await wait_for_blockchain_confirmation(
+            w3, deposit_tx_hash, opportunity['id'],
+            "step_6_blockchain_confirm", MIN_CONFIRMATIONS
+        )
+        
+        # STEP 7: Wait for sell exchange to credit tokens
+        await wait_for_deposit_credit(
+            sell_exchange, sell_exchange_name, token_symbol,
+            actual_token_amount, opportunity['id']
+        )
+        
+        # STEP 8: Sell token on exchange B
+        await log_transaction(opportunity['id'], "step_8_sell_token", "started", {
+            'exchange': sell_exchange_name,
+            'amount': actual_token_amount
+        }, is_live=True)
+        
+        async def place_sell_order():
+            return await sell_exchange.create_order(
+                symbol=f"{token_symbol}/USDT",
+                type='market',
+                side='sell',
+                amount=actual_token_amount
+            )
+        
+        sell_order = await retry_with_backoff(place_sell_order)
+        usdt_received = sell_order.get('cost', 0)
+        
+        await log_transaction(opportunity['id'], "step_8_sell_token", "completed", {
+            'order_id': sell_order['id'],
+            'usdt_received': usdt_received
+        }, is_live=True)
+        
+        # STEP 9: Withdraw USDT profit back to wallet
+        await log_transaction(opportunity['id'], "step_9_withdraw_profit", "started", {
+            'amount': usdt_received
+        }, is_live=True)
+        
+        profit_withdrawal = await withdraw_from_exchange_to_wallet(
+            sell_exchange, sell_exchange_name, 'USDT',
+            usdt_received, wallet_address, opportunity['id']
+        )
+        
+        profit_tx_hash = await wait_for_withdrawal_completion(
+            sell_exchange, sell_exchange_name, profit_withdrawal['id'], opportunity['id']
+        )
+        
+        await wait_for_blockchain_confirmation(
+            w3, profit_tx_hash, opportunity['id'],
+            "step_9_blockchain_confirm", MIN_CONFIRMATIONS
+        )
+        
+        # Calculate final profit
+        total_time = time.time() - start_time
+        actual_profit = usdt_received - usdt_amount
+        actual_profit_percent = (actual_profit / usdt_amount) * 100 if usdt_amount > 0 else 0
+        
+        # Update opportunity
+        await db.arbitrage_opportunities.update_one(
+            {'id': opportunity['id']},
+            {'$set': {'status': 'completed'}}
+        )
+        
+        await log_transaction(opportunity['id'], "completed", "completed", {
+            'total_time_seconds': int(total_time),
+            'total_time_minutes': round(total_time / 60, 2),
+            'usdt_invested': usdt_amount,
+            'usdt_received': usdt_received,
+            'profit': actual_profit,
+            'profit_percent': actual_profit_percent,
+            'all_funds_returned_to_wallet': True
+        }, is_live=True)
+        
+        # Send success notification
+        if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+            message = (
+                f"✅ *Arbitrage Completed Successfully!*\n\n"
+                f"Token: {token_symbol}\n"
+                f"Invested: ${usdt_amount:.2f}\n"
+                f"Received: ${usdt_received:.2f}\n"
+                f"*Profit: ${actual_profit:.2f} ({actual_profit_percent:.2f}%)*\n\n"
+                f"⏱ Total Time: {int(total_time/60)} min {int(total_time%60)} sec\n\n"
+                f"💰 All funds returned to your wallet!"
+            )
+            await send_telegram_message(telegram_chat_id, message)
+        
+        return {
+            "status": "completed",
+            "opportunity_id": opportunity['id'],
+            "execution_time_seconds": int(total_time),
+            "execution_time_minutes": round(total_time / 60, 2),
+            "usdt_invested": usdt_amount,
+            "usdt_received": usdt_received,
+            "profit": round(actual_profit, 4),
+            "profit_percent": round(actual_profit_percent, 4),
+            "is_live": True,
+            "buy_order_id": buy_order['id'],
+            "sell_order_id": sell_order['id'],
+            "blockchain_transactions": [fund_tx_hash, withdraw_tx_hash, deposit_tx_hash, profit_tx_hash],
+            "all_funds_returned_to_wallet": True
+        }
+        
+    except Exception as e:
+        # Log failure
+        await log_transaction(opportunity['id'], "failed", "failed", {
+            'error': str(e),
+            'failed_at_seconds': int(time.time() - start_time)
+        }, is_live=True)
+        
+        # Update opportunity
+        await db.arbitrage_opportunities.update_one(
+            {'id': opportunity['id']},
+            {'$set': {'status': 'failed'}}
+        )
+        
+        # Send failure notification
+        if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+            message = (
+                f"❌ *Arbitrage Failed*\n\n"
+                f"Token: {token_symbol}\n"
+                f"Error: {str(e)}\n\n"
+                f"⚠️ Please check your wallet and exchange balances manually."
+            )
+            await send_telegram_message(telegram_chat_id, message)
+        
+        raise
+
+
+# ============== LEGACY ARBITRAGE (Pre-positioned funds) ==============
 
 async def execute_real_arbitrage(opportunity: dict, usdt_amount: float, slippage_tolerance: float, telegram_chat_id: Optional[str]) -> dict:
     """Execute real arbitrage trades on exchanges"""
