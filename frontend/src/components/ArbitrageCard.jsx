@@ -286,8 +286,17 @@ export default function ArbitrageCard({ opportunity, index, setOpportunities, fe
                 >
                   <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                   <div className="text-xs text-red-400">
-                    <p className="font-semibold mb-1">Live Trading Warning</p>
-                    <p>Real orders will be placed. Ensure you have sufficient funds on both exchanges.</p>
+                    <p className="font-semibold mb-1">⚡ Full Arbitrage Execution</p>
+                    <p className="mb-2">Automated flow will execute in ~5-15 minutes:</p>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Send USDT from your wallet to buy exchange</li>
+                      <li>Buy {opportunity.token_symbol} tokens</li>
+                      <li>Withdraw tokens to your wallet</li>
+                      <li>Deposit tokens to sell exchange</li>
+                      <li>Sell tokens for USDT</li>
+                      <li>Withdraw profit back to your wallet</li>
+                    </ol>
+                    <p className="mt-2 font-semibold">Ensure your wallet has sufficient USDT + gas fees (BNB).</p>
                   </div>
                 </motion.div>
               )}
