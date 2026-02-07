@@ -414,46 +414,92 @@ def decrypt_data(encrypted_data: str) -> str:
 exchange_instances: Dict[str, ccxt.Exchange] = {}
 
 async def get_exchange_instance(exchange_name: str) -> Optional[ccxt.Exchange]:
-    """Get or create an exchange instance"""
-    if exchange_name.lower() in exchange_instances:
-        return exchange_instances[exchange_name.lower()]
+    """
+    Get or create an exchange instance with proper error handling
+    Implements caching to avoid recreating instances
+    """
+    exchange_key = exchange_name.lower()
+    
+    # Return cached instance if available and valid
+    if exchange_key in exchange_instances:
+        instance = exchange_instances[exchange_key]
+        try:
+            # Quick health check
+            if hasattr(instance, 'markets') and instance.markets:
+                return instance
+        except:
+            # Remove invalid instance
+            await instance.close()
+            del exchange_instances[exchange_key]
     
     # Fetch exchange config from DB
-    exchange_doc = await db.exchanges.find_one({"name": {"$regex": f"^{exchange_name}$", "$options": "i"}, "is_active": True}, {"_id": 0})
+    exchange_doc = await db.exchanges.find_one(
+        {"name": {"$regex": f"^{exchange_name}$", "$options": "i"}, "is_active": True}, 
+        {"_id": 0}
+    )
+    
     if not exchange_doc:
+        logger.warning(f"Exchange {exchange_name} not found in database")
         return None
     
     try:
+        # Decrypt credentials
         api_key = decrypt_data(exchange_doc['api_key_encrypted'])
         api_secret = decrypt_data(exchange_doc['api_secret_encrypted'])
         
+        # Create exchange config
         config = {
             'apiKey': api_key,
             'secret': api_secret,
             'enableRateLimit': True,
             'timeout': 30000,
+            'options': {
+                'defaultType': 'spot',
+            }
         }
         
-        exchange_class = getattr(ccxt, exchange_name.lower(), None)
+        # Get exchange class
+        exchange_class = getattr(ccxt, exchange_key, None)
         if not exchange_class:
+            logger.error(f"Exchange class {exchange_name} not found in ccxt")
             return None
         
+        # Create and initialize instance
         instance = exchange_class(config)
-        await instance.load_markets()
-        exchange_instances[exchange_name.lower()] = instance
+        
+        # Load markets with retry
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await instance.load_markets()
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(1 * (attempt + 1))
+        
+        # Cache instance
+        exchange_instances[exchange_key] = instance
+        logger.info(f"Successfully created exchange instance for {exchange_name}")
         return instance
+        
     except Exception as e:
         logger.error(f"Error creating exchange instance for {exchange_name}: {e}")
         return None
 
 async def close_exchange_instances():
-    """Close all exchange instances"""
-    for name, instance in exchange_instances.items():
+    """Close all exchange instances and clear cache"""
+    closed_count = 0
+    for name, instance in list(exchange_instances.items()):
         try:
             await instance.close()
-        except Exception:
-            pass
+            closed_count += 1
+        except Exception as e:
+            logger.warning(f"Error closing exchange {name}: {e}")
+    
     exchange_instances.clear()
+    if closed_count > 0:
+        logger.info(f"Closed {closed_count} exchange instances")
 
 # ============== SETTINGS ENDPOINTS ==============
 @api_router.get("/settings")
