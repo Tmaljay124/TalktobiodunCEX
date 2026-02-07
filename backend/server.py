@@ -2005,5 +2005,11 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    """Cleanup on shutdown"""
+    # Close all exchange instances
     await close_exchange_instances()
+    
+    # Close MongoDB connection
     client.close()
+    
+    logger.info("Application shutdown complete")
