@@ -335,7 +335,7 @@ C:\Users\USER\Desktop\CEX BOT\CEX\CEXMasterP\frontend\.env
 - Keep both PowerShell windows open
 - Don't close browser during trades
 - Monitor for any error messages
-- Check MongoDB is always running
+- Check MySQL is always running
 
 ### Security:
 - Never share your .env files
