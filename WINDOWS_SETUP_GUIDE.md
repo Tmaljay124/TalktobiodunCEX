@@ -159,8 +159,10 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 python server.py
 
 # You should see:
-# INFO:     Uvicorn running on http://0.0.0.0:8001
-# INFO:     Application startup complete.
+# INFO: MySQL connection pool created: crypto_arbitrage
+# INFO: Application started successfully with MySQL
+# INFO: Uvicorn running on http://0.0.0.0:8001
+# INFO: Application startup complete.
 ```
 
 **✅ Backend is now running!**
