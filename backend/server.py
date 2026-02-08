@@ -22,10 +22,9 @@ from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB Configuration with fallback defaults
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017/')
