@@ -113,7 +113,7 @@ pip install -r requirements.txt
 # This takes 2-5 minutes
 ```
 
-#### 2.5 Create .env File (Optional but Recommended)
+#### 3.5 Create .env File (Optional but Recommended)
 Create a file named `.env` in the `backend` folder with this content:
 
 ```env
