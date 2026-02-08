@@ -250,6 +250,83 @@ export default function SettingsModal({ open, onOpenChange, settings, updateSett
               </div>
             </div>
           </div>
+
+          {/* Fail-Safe Arbitrage Section */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-amber-400" strokeWidth={1.5} />
+              <h3 className="font-semibold text-sm uppercase tracking-wider">Fail-Safe Arbitrage</h3>
+            </div>
+
+            <div className="p-4 rounded-sm border border-amber-500/30 bg-amber-500/5">
+              <p className="text-xs text-muted-foreground mb-4">
+                When executing arbitrage, the bot will monitor the spread continuously and only sell when the target spread is reached.
+                This protects your investment by ensuring you only sell at favorable conditions.
+              </p>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Target className="w-3 h-3" />
+                    Target Sell Spread (%)
+                  </Label>
+                  <Input
+                    type="number"
+                    step="1"
+                    min="1"
+                    max="100"
+                    placeholder="85"
+                    value={localSettings.target_sell_spread || 85}
+                    onChange={(e) => setLocalSettings(prev => ({ ...prev, target_sell_spread: parseFloat(e.target.value) }))}
+                    className="bg-background border-border"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Only sell when spread hits this target
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Timer className="w-3 h-3" />
+                    Check Interval (seconds)
+                  </Label>
+                  <Input
+                    type="number"
+                    step="5"
+                    min="5"
+                    max="60"
+                    placeholder="10"
+                    value={localSettings.spread_check_interval || 10}
+                    onChange={(e) => setLocalSettings(prev => ({ ...prev, spread_check_interval: parseInt(e.target.value) }))}
+                    className="bg-background border-border"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    How often to check spread
+                  </p>
+                </div>
+
+                <div className="space-y-2 col-span-2">
+                  <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Max Wait Time (seconds)
+                  </Label>
+                  <Input
+                    type="number"
+                    step="300"
+                    min="300"
+                    max="7200"
+                    placeholder="3600"
+                    value={localSettings.max_wait_time || 3600}
+                    onChange={(e) => setLocalSettings(prev => ({ ...prev, max_wait_time: parseInt(e.target.value) }))}
+                    className="bg-background border-border"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    If target spread not reached within this time, sell anyway (fail-safe). Default: 1 hour (3600s)
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="flex justify-end gap-3 pt-4 border-t border-border">
