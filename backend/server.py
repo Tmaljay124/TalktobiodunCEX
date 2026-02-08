@@ -432,11 +432,13 @@ async def get_exchange_instance(exchange_name: str) -> Optional[ccxt.Exchange]:
             await instance.close()
             del exchange_instances[exchange_key]
     
-    # Fetch exchange config from DB
-    exchange_doc = await db.exchanges.find_one(
-        {"name": {"$regex": f"^{exchange_name}$", "$options": "i"}, "is_active": True}, 
-        {"_id": 0}
-    )
+    # Fetch exchange config from DB - use case-insensitive name match
+    exchanges = await db.exchanges.find({"is_active": True}).to_list(100)
+    exchange_doc = None
+    for ex in exchanges:
+        if ex.get('name', '').lower() == exchange_key:
+            exchange_doc = ex
+            break
     
     if not exchange_doc:
         logger.warning(f"Exchange {exchange_name} not found in database")
