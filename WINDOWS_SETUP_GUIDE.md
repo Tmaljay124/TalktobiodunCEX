@@ -173,7 +173,7 @@ cd C:\Users\USER\Desktop\CEX BOT\CEX\CEXMasterP
 cd frontend
 ```
 
-#### 3.2 Install Yarn (if not installed)
+#### 4.2 Install Yarn (if not installed)
 ```powershell
 npm install -g yarn
 ```
