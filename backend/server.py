@@ -393,6 +393,10 @@ class BotSettings(BaseModel):
     min_spread_threshold: float = 0.5  # Minimum spread % to trigger opportunity
     max_trade_amount: float = 1000.0
     slippage_tolerance: float = 0.5  # Percentage
+    # Fail-safe configuration
+    target_sell_spread: float = 85.0  # Target spread % to trigger sell (fail-safe)
+    spread_check_interval: int = 10  # Seconds between spread checks
+    max_wait_time: int = 3600  # Max time to wait for target spread (seconds)
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class SettingsUpdate(BaseModel):
@@ -402,6 +406,25 @@ class SettingsUpdate(BaseModel):
     min_spread_threshold: Optional[float] = None
     max_trade_amount: Optional[float] = None
     slippage_tolerance: Optional[float] = None
+    target_sell_spread: Optional[float] = None
+    spread_check_interval: Optional[int] = None
+    max_wait_time: Optional[int] = None
+
+# Fail-safe arbitrage state tracking
+class FailSafeArbitrageState(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    opportunity_id: str
+    status: str = "pending"  # pending, funding_cex_a, bought, withdrawn, funding_cex_b, monitoring, sold, completed, failed
+    token_symbol: str
+    buy_exchange: str
+    sell_exchange: str
+    tokens_held: float = 0.0
+    usdt_invested: float = 0.0
+    current_spread: float = 0.0
+    target_spread: float = 85.0
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # ============== ENCRYPTION HELPERS ==============
 def encrypt_data(data: str) -> str:
