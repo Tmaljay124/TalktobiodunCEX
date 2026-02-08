@@ -164,7 +164,7 @@ Leave this window open. Open a new PowerShell window for frontend.
 
 ### Step 4: Setup Frontend
 
-#### 3.1 Open New PowerShell Window
+#### 4.1 Open New PowerShell Window
 ```powershell
 # Navigate to project
 cd C:\Users\USER\Desktop\CEX BOT\CEX\CEXMasterP
