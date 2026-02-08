@@ -84,7 +84,7 @@ exit;
 
 ## Step 3: Configure Backend
 
-#### 2.1 Open PowerShell/Command Prompt
+#### 3.1 Open PowerShell/Command Prompt
 ```powershell
 # Navigate to your project
 cd C:\Users\USER\Desktop\CEX BOT\CEX\CEXMasterP
