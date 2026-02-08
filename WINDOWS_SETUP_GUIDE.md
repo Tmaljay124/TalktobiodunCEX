@@ -48,7 +48,41 @@ npm --version
 
 ---
 
-### Step 2: Setup Backend
+## Step 2: Setup MySQL Database
+
+### 2.1 Create Database
+```powershell
+# Login to MySQL
+mysql -u root -p
+# Enter your root password when prompted
+
+# In MySQL console:
+CREATE DATABASE crypto_arbitrage;
+USE crypto_arbitrage;
+
+# Import the schema (from project root):
+source database_schema.sql;
+
+# Or manually run all CREATE TABLE statements from database_schema.sql
+
+# Verify tables created:
+SHOW TABLES;
+# Should show: arbitrage_opportunities, exchanges, settings, tokens, transaction_logs, wallet
+
+# Exit MySQL:
+exit;
+```
+
+### 2.2 Test Connection (Optional)
+```powershell
+mysql -u root -p crypto_arbitrage
+SHOW TABLES;
+exit;
+```
+
+---
+
+## Step 3: Configure Backend
 
 #### 2.1 Open PowerShell/Command Prompt
 ```powershell
