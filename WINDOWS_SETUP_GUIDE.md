@@ -117,9 +117,12 @@ pip install -r requirements.txt
 Create a file named `.env` in the `backend` folder with this content:
 
 ```env
-# MongoDB Configuration
-MONGO_URL=mongodb://localhost:27017/
-DB_NAME=crypto_arbitrage
+# MySQL Configuration
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=crypto_arbitrage
 
 # Encryption Key - GENERATE A NEW ONE!
 ENCRYPTION_KEY=
