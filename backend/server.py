@@ -1458,14 +1458,17 @@ async def execute_full_arbitrage_with_transfers(
     telegram_chat_id: Optional[str]
 ) -> dict:
     """
-    Execute complete arbitrage: Wallet → CEX A (buy) → Withdraw → Wallet → CEX B (deposit) → Sell → Withdraw → Wallet
+    Execute FAIL-SAFE Arbitrage with spread monitoring:
     
-    Optimizations:
-    - 1 confirmation only for speed
-    - Parallel execution where possible
-    - Fee checking before execution
-    - Rate limit handling
-    - Error handling with rollback capability
+    FLOW:
+    1. Fund first CEX (buy exchange) and immediately buy token
+    2. Withdraw purchased token to external wallet
+    3. Fund second CEX (sell exchange) via API and WAIT
+    4. MONITOR spread continuously - only sell when spread hits target (default 85%)
+    5. If spread hits target, sell token and withdraw to external wallet
+    6. If spread never hits target within max_wait_time, sell anyway (fail-safe)
+    
+    This ensures you only sell at favorable conditions, protecting your investment.
     """
     start_time = time.time()
     
@@ -1473,8 +1476,14 @@ async def execute_full_arbitrage_with_transfers(
     sell_exchange_name = opportunity['sell_exchange']
     token_symbol = opportunity['token_symbol']
     
+    # Get settings for fail-safe configuration
+    settings = await db.settings.find_one({})
+    target_spread = settings.get('target_sell_spread', 85.0) if settings else 85.0
+    spread_check_interval = settings.get('spread_check_interval', 10) if settings else 10
+    max_wait_time = settings.get('max_wait_time', 3600) if settings else 3600  # 1 hour default
+    
     # Get wallet config
-    wallet = await db.wallet.find_one({}, {"_id": 0})
+    wallet = await db.wallet.find_one({})
     if not wallet:
         raise HTTPException(status_code=400, detail="Wallet not configured. Please add your wallet in settings.")
     
@@ -1492,7 +1501,7 @@ async def execute_full_arbitrage_with_transfers(
     w3 = bsc_service.get_web3(is_live=True)
     
     # Get token info
-    token_doc = await db.tokens.find_one({'symbol': token_symbol}, {"_id": 0})
+    token_doc = await db.tokens.find_one({'symbol': token_symbol})
     if not token_doc:
         raise HTTPException(status_code=400, detail=f"Token {token_symbol} not found in database")
     
@@ -1503,6 +1512,18 @@ async def execute_full_arbitrage_with_transfers(
         {'id': opportunity['id']},
         {'$set': {'status': 'executing'}}
     )
+    
+    # Create fail-safe state record
+    failsafe_state = FailSafeArbitrageState(
+        opportunity_id=opportunity['id'],
+        status='pending',
+        token_symbol=token_symbol,
+        buy_exchange=buy_exchange_name,
+        sell_exchange=sell_exchange_name,
+        usdt_invested=usdt_amount,
+        target_spread=target_spread
+    )
+    await db.failsafe_states.insert_one(failsafe_state.model_dump())
     
     # STEP 0: Check profitability with ALL fees
     await log_transaction(opportunity['id'], "profitability_check", "started", {}, is_live=True)
@@ -1536,21 +1557,29 @@ async def execute_full_arbitrage_with_transfers(
     # Send Telegram notification
     if telegram_chat_id and TELEGRAM_BOT_TOKEN:
         message = (
-            f"🚀 *Starting Full Arbitrage*\n\n"
+            f"🚀 *Starting FAIL-SAFE Arbitrage*\n\n"
             f"Token: {token_symbol}\n"
             f"Buy: {buy_exchange_name} @ ${opportunity['buy_price']:.4f}\n"
             f"Sell: {sell_exchange_name} @ ${opportunity['sell_price']:.4f}\n"
             f"Amount: ${usdt_amount}\n"
-            f"Expected Profit: ${profitability['net_profit']:.2f} ({profitability['profit_percent']:.2f}%)\n"
-            f"Total Fees: ${profitability['total_fees']:.2f}\n\n"
-            f"⏱ Estimated time: 5-15 minutes"
+            f"Expected Profit: ${profitability['net_profit']:.2f} ({profitability['profit_percent']:.2f}%)\n\n"
+            f"🎯 Target Sell Spread: {target_spread}%\n"
+            f"⏱ Max Wait Time: {max_wait_time/60:.0f} minutes\n\n"
+            f"📊 Will monitor spread and sell only when target is reached!"
         )
         await send_telegram_message(telegram_chat_id, message)
     
     token_amount = usdt_amount / opportunity['buy_price']
     
     try:
-        # STEP 1: Send USDT from wallet to buy exchange
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 1: Fund first CEX and IMMEDIATELY buy token
+        # ═══════════════════════════════════════════════════════════════
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'funding_cex_a', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
         await log_transaction(opportunity['id'], "step_1_fund_buy_exchange", "started", {
             'amount': usdt_amount,
             'destination': buy_exchange_name
@@ -1566,23 +1595,20 @@ async def execute_full_arbitrage_with_transfers(
             usdt_amount, opportunity['id'], "step_1_fund_buy_exchange"
         )
         
-        # Wait for blockchain confirmation (parallel with next step where possible)
-        blockchain_confirm_task = asyncio.create_task(
-            wait_for_blockchain_confirmation(
-                w3, fund_tx_hash, opportunity['id'],
-                "step_1_blockchain_confirm", MIN_CONFIRMATIONS
-            )
+        # Wait for blockchain confirmation
+        await wait_for_blockchain_confirmation(
+            w3, fund_tx_hash, opportunity['id'],
+            "step_1_blockchain_confirm", MIN_CONFIRMATIONS
         )
         
-        # STEP 2: Wait for exchange to credit USDT
-        await blockchain_confirm_task
+        # Wait for exchange to credit USDT
         await wait_for_deposit_credit(
             buy_exchange, buy_exchange_name, 'USDT',
             usdt_amount, opportunity['id']
         )
         
-        # STEP 3: Buy token on exchange A
-        await log_transaction(opportunity['id'], "step_3_buy_token", "started", {
+        # IMMEDIATELY buy token
+        await log_transaction(opportunity['id'], "step_1b_buy_token", "started", {
             'exchange': buy_exchange_name,
             'amount': token_amount
         }, is_live=True)
@@ -1598,13 +1624,25 @@ async def execute_full_arbitrage_with_transfers(
         buy_order = await retry_with_backoff(place_buy_order)
         actual_token_amount = buy_order.get('filled', token_amount)
         
-        await log_transaction(opportunity['id'], "step_3_buy_token", "completed", {
+        await log_transaction(opportunity['id'], "step_1b_buy_token", "completed", {
             'order_id': buy_order['id'],
             'filled': actual_token_amount,
             'cost': buy_order.get('cost')
         }, is_live=True)
         
-        # STEP 4: Withdraw token from exchange A to wallet
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'bought', 'tokens_held': actual_token_amount, 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 2: Withdraw purchased token to external wallet
+        # ═══════════════════════════════════════════════════════════════
+        await log_transaction(opportunity['id'], "step_2_withdraw_to_wallet", "started", {
+            'amount': actual_token_amount,
+            'destination': wallet_address
+        }, is_live=True)
+        
         withdrawal = await withdraw_from_exchange_to_wallet(
             buy_exchange, buy_exchange_name, token_symbol,
             actual_token_amount, wallet_address, opportunity['id']
@@ -1618,34 +1656,173 @@ async def execute_full_arbitrage_with_transfers(
         # Wait for blockchain confirmation
         await wait_for_blockchain_confirmation(
             w3, withdraw_tx_hash, opportunity['id'],
-            "step_4_blockchain_confirm", MIN_CONFIRMATIONS
+            "step_2_blockchain_confirm", MIN_CONFIRMATIONS
         )
         
-        # STEP 5: Get deposit address for sell exchange (can do early)
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'withdrawn', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 3: Fund second CEX (sell exchange) and WAIT
+        # ═══════════════════════════════════════════════════════════════
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'funding_cex_b', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        # Get deposit address for sell exchange
         sell_deposit = await get_deposit_address(sell_exchange, sell_exchange_name, token_symbol, opportunity['id'])
         
-        # STEP 6: Send token from wallet to sell exchange
+        # Send token from wallet to sell exchange
         deposit_tx_hash = await send_token_from_wallet_to_exchange(
             w3, private_key, token_contract_address, sell_deposit['address'],
-            actual_token_amount, opportunity['id'], "step_6_send_to_sell_exchange"
+            actual_token_amount, opportunity['id'], "step_3_send_to_sell_exchange"
         )
         
         # Wait for blockchain confirmation
         await wait_for_blockchain_confirmation(
             w3, deposit_tx_hash, opportunity['id'],
-            "step_6_blockchain_confirm", MIN_CONFIRMATIONS
+            "step_3_blockchain_confirm", MIN_CONFIRMATIONS
         )
         
-        # STEP 7: Wait for sell exchange to credit tokens
+        # Wait for sell exchange to credit tokens
         await wait_for_deposit_credit(
             sell_exchange, sell_exchange_name, token_symbol,
             actual_token_amount, opportunity['id']
         )
         
-        # STEP 8: Sell token on exchange B
-        await log_transaction(opportunity['id'], "step_8_sell_token", "started", {
+        await log_transaction(opportunity['id'], "step_3_deposit_credited", "completed", {
             'exchange': sell_exchange_name,
-            'amount': actual_token_amount
+            'tokens': actual_token_amount
+        }, is_live=True)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 4: FAIL-SAFE - Monitor spread continuously until target hit
+        # ═══════════════════════════════════════════════════════════════
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'monitoring', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        await log_transaction(opportunity['id'], "step_4_monitoring_spread", "started", {
+            'target_spread': target_spread,
+            'check_interval': spread_check_interval,
+            'max_wait_time': max_wait_time
+        }, is_live=True)
+        
+        if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+            message = (
+                f"👁 *Monitoring Spread*\n\n"
+                f"Token: {token_symbol}\n"
+                f"Target Spread: {target_spread}%\n"
+                f"Tokens deposited on {sell_exchange_name}\n\n"
+                f"Will notify when spread hits target or max wait time reached."
+            )
+            await send_telegram_message(telegram_chat_id, message)
+        
+        # Monitor spread until target is reached or timeout
+        monitoring_start = time.time()
+        final_spread = 0
+        spread_hit_target = False
+        
+        while (time.time() - monitoring_start) < max_wait_time:
+            try:
+                # Get current prices
+                buy_ticker = await buy_exchange.fetch_ticker(f"{token_symbol}/USDT")
+                sell_ticker = await sell_exchange.fetch_ticker(f"{token_symbol}/USDT")
+                
+                current_buy_price = buy_ticker.get('ask', 0) or 0
+                current_sell_price = sell_ticker.get('bid', 0) or 0
+                
+                if current_buy_price > 0:
+                    current_spread = ((current_sell_price - current_buy_price) / current_buy_price) * 100
+                else:
+                    current_spread = 0
+                
+                final_spread = current_spread
+                
+                # Update state with current spread
+                await db.failsafe_states.update_one(
+                    {'opportunity_id': opportunity['id']},
+                    {'$set': {'current_spread': current_spread, 'updated_at': datetime.now(timezone.utc).isoformat()}}
+                )
+                
+                # Broadcast spread update via WebSocket
+                await manager.broadcast({
+                    "type": "spread_update",
+                    "opportunity_id": opportunity['id'],
+                    "current_spread": round(current_spread, 4),
+                    "target_spread": target_spread,
+                    "elapsed_seconds": int(time.time() - monitoring_start)
+                })
+                
+                await log_transaction(opportunity['id'], "spread_check", "checking", {
+                    'current_spread': round(current_spread, 4),
+                    'target_spread': target_spread,
+                    'buy_price': current_buy_price,
+                    'sell_price': current_sell_price,
+                    'elapsed_seconds': int(time.time() - monitoring_start)
+                }, is_live=True)
+                
+                # Check if target spread is reached
+                if current_spread >= target_spread:
+                    spread_hit_target = True
+                    await log_transaction(opportunity['id'], "step_4_target_reached", "completed", {
+                        'final_spread': current_spread,
+                        'target_spread': target_spread,
+                        'wait_time_seconds': int(time.time() - monitoring_start)
+                    }, is_live=True)
+                    
+                    if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+                        message = (
+                            f"🎯 *TARGET SPREAD REACHED!*\n\n"
+                            f"Token: {token_symbol}\n"
+                            f"Current Spread: {current_spread:.2f}%\n"
+                            f"Target: {target_spread}%\n\n"
+                            f"⚡ Executing sell order NOW!"
+                        )
+                        await send_telegram_message(telegram_chat_id, message)
+                    
+                    break
+                
+            except Exception as e:
+                logger.warning(f"Error checking spread: {e}")
+            
+            await asyncio.sleep(spread_check_interval)
+        
+        # Log if timeout occurred
+        if not spread_hit_target:
+            await log_transaction(opportunity['id'], "step_4_timeout", "completed", {
+                'final_spread': final_spread,
+                'target_spread': target_spread,
+                'wait_time_seconds': int(time.time() - monitoring_start),
+                'reason': 'Max wait time reached - executing fail-safe sell'
+            }, is_live=True)
+            
+            if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+                message = (
+                    f"⏰ *TIMEOUT - FAIL-SAFE ACTIVATED*\n\n"
+                    f"Token: {token_symbol}\n"
+                    f"Final Spread: {final_spread:.2f}%\n"
+                    f"Target was: {target_spread}%\n\n"
+                    f"⚠️ Max wait time reached. Executing sell order anyway."
+                )
+                await send_telegram_message(telegram_chat_id, message)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 5: Sell token when spread hits target (or timeout)
+        # ═══════════════════════════════════════════════════════════════
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'selling', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        await log_transaction(opportunity['id'], "step_5_sell_token", "started", {
+            'exchange': sell_exchange_name,
+            'amount': actual_token_amount,
+            'spread_at_sell': final_spread
         }, is_live=True)
         
         async def place_sell_order():
@@ -1659,13 +1836,20 @@ async def execute_full_arbitrage_with_transfers(
         sell_order = await retry_with_backoff(place_sell_order)
         usdt_received = sell_order.get('cost', 0)
         
-        await log_transaction(opportunity['id'], "step_8_sell_token", "completed", {
+        await log_transaction(opportunity['id'], "step_5_sell_token", "completed", {
             'order_id': sell_order['id'],
             'usdt_received': usdt_received
         }, is_live=True)
         
-        # STEP 9: Withdraw USDT profit back to wallet
-        await log_transaction(opportunity['id'], "step_9_withdraw_profit", "started", {
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'sold', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 6: Withdraw USDT profit back to wallet
+        # ═══════════════════════════════════════════════════════════════
+        await log_transaction(opportunity['id'], "step_6_withdraw_profit", "started", {
             'amount': usdt_received
         }, is_live=True)
         
@@ -1680,7 +1864,7 @@ async def execute_full_arbitrage_with_transfers(
         
         await wait_for_blockchain_confirmation(
             w3, profit_tx_hash, opportunity['id'],
-            "step_9_blockchain_confirm", MIN_CONFIRMATIONS
+            "step_6_blockchain_confirm", MIN_CONFIRMATIONS
         )
         
         # Calculate final profit
@@ -1694,6 +1878,11 @@ async def execute_full_arbitrage_with_transfers(
             {'$set': {'status': 'completed'}}
         )
         
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'completed', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
         await log_transaction(opportunity['id'], "completed", "completed", {
             'total_time_seconds': int(total_time),
             'total_time_minutes': round(total_time / 60, 2),
@@ -1701,17 +1890,22 @@ async def execute_full_arbitrage_with_transfers(
             'usdt_received': usdt_received,
             'profit': actual_profit,
             'profit_percent': actual_profit_percent,
+            'spread_at_sell': final_spread,
+            'target_spread_reached': spread_hit_target,
             'all_funds_returned_to_wallet': True
         }, is_live=True)
         
         # Send success notification
         if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+            status_emoji = "✅" if spread_hit_target else "⚠️"
             message = (
-                f"✅ *Arbitrage Completed Successfully!*\n\n"
+                f"{status_emoji} *FAIL-SAFE Arbitrage Completed!*\n\n"
                 f"Token: {token_symbol}\n"
                 f"Invested: ${usdt_amount:.2f}\n"
                 f"Received: ${usdt_received:.2f}\n"
                 f"*Profit: ${actual_profit:.2f} ({actual_profit_percent:.2f}%)*\n\n"
+                f"📊 Spread at Sell: {final_spread:.2f}%\n"
+                f"🎯 Target Reached: {'Yes' if spread_hit_target else 'No (Timeout)'}\n"
                 f"⏱ Total Time: {int(total_time/60)} min {int(total_time%60)} sec\n\n"
                 f"💰 All funds returned to your wallet!"
             )
@@ -1729,6 +1923,8 @@ async def execute_full_arbitrage_with_transfers(
             "is_live": True,
             "buy_order_id": buy_order['id'],
             "sell_order_id": sell_order['id'],
+            "spread_at_sell": round(final_spread, 4),
+            "target_spread_reached": spread_hit_target,
             "blockchain_transactions": [fund_tx_hash, withdraw_tx_hash, deposit_tx_hash, profit_tx_hash],
             "all_funds_returned_to_wallet": True
         }
@@ -1746,10 +1942,15 @@ async def execute_full_arbitrage_with_transfers(
             {'$set': {'status': 'failed'}}
         )
         
+        await db.failsafe_states.update_one(
+            {'opportunity_id': opportunity['id']},
+            {'$set': {'status': 'failed', 'updated_at': datetime.now(timezone.utc).isoformat()}}
+        )
+        
         # Send failure notification
         if telegram_chat_id and TELEGRAM_BOT_TOKEN:
             message = (
-                f"❌ *Arbitrage Failed*\n\n"
+                f"❌ *FAIL-SAFE Arbitrage Failed*\n\n"
                 f"Token: {token_symbol}\n"
                 f"Error: {str(e)}\n\n"
                 f"⚠️ Please check your wallet and exchange balances manually."
@@ -1757,6 +1958,7 @@ async def execute_full_arbitrage_with_transfers(
             await send_telegram_message(telegram_chat_id, message)
         
         raise
+
 
 
 # ============== LEGACY ARBITRAGE (Pre-positioned funds) ==============
