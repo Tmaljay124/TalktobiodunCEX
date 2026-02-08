@@ -11,7 +11,10 @@ import {
   Loader2,
   ToggleLeft,
   ToggleRight,
-  AlertTriangle
+  AlertTriangle,
+  Target,
+  Clock,
+  Timer
 } from "lucide-react";
 import {
   Dialog,
