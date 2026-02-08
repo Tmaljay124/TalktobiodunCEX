@@ -192,7 +192,7 @@ Create a file named `.env` in the `frontend` folder:
 REACT_APP_BACKEND_URL=http://localhost:8001
 ```
 
-#### 3.5 Start Frontend
+#### 4.5 Start Frontend
 ```powershell
 yarn start
 
