@@ -2,12 +2,12 @@
 
 ## Error You're Seeing:
 ```
-KeyError: 'MONGO_URL'
+KeyError: 'MONGO_URL'  ← OLD ERROR (FIXED)
 ```
 
-## ✅ FIXED - Server Now Works Without .env File
+## ✅ FIXED - Server Now Uses MySQL
 
-The error has been fixed in the code. The server will now use default values if .env file is missing.
+The bot now uses **MySQL database** instead of MongoDB.
 
 ---
 
@@ -24,15 +24,18 @@ python --version
 # Should show Python 3.9 or higher
 ```
 
-#### 1.2 Install MongoDB
-1. Download from: https://www.mongodb.com/try/download/community
-2. Choose "Windows x64" and "Install as Windows Service"
-3. Click "Install"
-4. Verify it's running:
+#### 1.2 Install MySQL
+1. Download from: https://dev.mysql.com/downloads/installer/
+2. Choose "mysql-installer-community" (includes everything)
+3. Install with default settings
+4. **IMPORTANT:** Remember your root password!
+5. Verify it's running:
 ```powershell
 # Open Services (Win+R, type "services.msc")
-# Look for "MongoDB Server" - should be Running
+# Look for "MySQL80" - should be Running
 ```
+
+**Detailed MySQL Setup:** See `/app/MYSQL_WINDOWS_SETUP.md`
 
 #### 1.3 Install Node.js
 1. Download from: https://nodejs.org/ (LTS version)
