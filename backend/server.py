@@ -732,8 +732,8 @@ async def delete_token(token_id: str):
 
 # ============== EXCHANGE ENDPOINTS ==============
 @api_router.post("/exchanges")
-async def create_exchange(exchange_data: ExchangeCreate):
-    exchange = Exchange(
+async def create_exchange(exchange_data: ExchangeCreate, authenticated: bool = Depends(verify_api_key)):
+    """Add a new exchange - REQUIRES AUTHENTICATION"""
         name=exchange_data.name,
         api_key_encrypted=encrypt_data(exchange_data.api_key),
         api_secret_encrypted=encrypt_data(exchange_data.api_secret),
@@ -754,7 +754,8 @@ async def get_exchanges():
     return exchanges
 
 @api_router.delete("/exchanges/{exchange_id}")
-async def delete_exchange(exchange_id: str):
+async def delete_exchange(exchange_id: str, authenticated: bool = Depends(verify_api_key)):
+    """Delete an exchange - REQUIRES AUTHENTICATION"""
     result = await db.exchanges.update_one({"id": exchange_id}, {"$set": {"is_active": False}})
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Exchange not found")
@@ -794,7 +795,8 @@ async def test_exchange_connection(exchange_data: ExchangeCreate):
 
 # ============== WALLET ENDPOINTS ==============
 @api_router.post("/wallet")
-async def save_wallet_config(wallet_data: WalletConfigCreate):
+async def save_wallet_config(wallet_data: WalletConfigCreate, authenticated: bool = Depends(verify_api_key)):
+    """Save wallet configuration - REQUIRES AUTHENTICATION"""
     # Validate address if provided
     address = wallet_data.address
     if address and not bsc_service.is_valid_address(address):
