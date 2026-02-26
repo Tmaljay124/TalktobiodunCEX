@@ -673,8 +673,8 @@ async def get_settings():
     return settings
 
 @api_router.put("/settings")
-async def update_settings(settings_update: SettingsUpdate):
-    """Update bot settings"""
+async def update_settings(settings_update: SettingsUpdate, authenticated: bool = Depends(verify_api_key)):
+    """Update bot settings - REQUIRES AUTHENTICATION"""
     update_data = {k: v for k, v in settings_update.model_dump().items() if v is not None}
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     
