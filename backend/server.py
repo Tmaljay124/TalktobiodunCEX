@@ -437,10 +437,13 @@ class BotSettings(BaseModel):
     min_spread_threshold: float = 0.5  # Minimum spread % to trigger opportunity
     max_trade_amount: float = 1000.0
     slippage_tolerance: float = 0.5  # Percentage
-    # Fail-safe configuration
-    target_sell_spread: float = 85.0  # Target spread % to trigger sell (fail-safe)
+    # Fail-safe configuration (FIXED: Realistic values)
+    target_sell_spread: float = 2.0  # Target spread % to trigger sell (REALISTIC: was 85%)
     spread_check_interval: int = 10  # Seconds between spread checks
-    max_wait_time: int = 3600  # Max time to wait for target spread (seconds)
+    max_wait_time: int = 600  # Max time to wait for target spread (10 minutes - was 3600)
+    # Stop-loss protection
+    stop_loss_spread: float = -2.0  # Abort if spread drops below this (negative = loss)
+    min_bnb_for_gas: float = 0.05  # Minimum BNB required for gas fees
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class SettingsUpdate(BaseModel):
@@ -453,6 +456,8 @@ class SettingsUpdate(BaseModel):
     target_sell_spread: Optional[float] = None
     spread_check_interval: Optional[int] = None
     max_wait_time: Optional[int] = None
+    stop_loss_spread: Optional[float] = None
+    min_bnb_for_gas: Optional[float] = None
 
 # Fail-safe arbitrage state tracking
 class FailSafeArbitrageState(BaseModel):
