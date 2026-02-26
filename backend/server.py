@@ -1906,10 +1906,34 @@ async def execute_full_arbitrage_with_transfers(
                 await log_transaction(opportunity['id'], "spread_check", "checking", {
                     'current_spread': round(current_spread, 4),
                     'target_spread': target_spread,
+                    'stop_loss_spread': stop_loss_spread,
                     'buy_price': current_buy_price,
                     'sell_price': current_sell_price,
                     'elapsed_seconds': int(time.time() - monitoring_start)
                 }, is_live=True)
+                
+                # ============== STOP-LOSS CHECK ==============
+                # Abort if spread becomes too negative (market crash protection)
+                if current_spread <= stop_loss_spread:
+                    await log_transaction(opportunity['id'], "stop_loss_triggered", "triggered", {
+                        'current_spread': current_spread,
+                        'stop_loss_spread': stop_loss_spread,
+                        'reason': 'Spread dropped below stop-loss threshold - preventing further loss'
+                    }, is_live=True)
+                    
+                    if telegram_chat_id and TELEGRAM_BOT_TOKEN:
+                        message = (
+                            f"🛑 *STOP-LOSS TRIGGERED!*\n\n"
+                            f"Token: {token_symbol}\n"
+                            f"Current Spread: {current_spread:.2f}%\n"
+                            f"Stop-Loss: {stop_loss_spread}%\n\n"
+                            f"⚠️ Aborting to prevent further loss. Selling NOW at market price."
+                        )
+                        await send_telegram_message(telegram_chat_id, message)
+                    
+                    # Don't break - will sell at current price
+                    logger.warning(f"🛑 Stop-loss triggered: {current_spread:.2f}% <= {stop_loss_spread}%")
+                    break
                 
                 # Check if target spread is reached
                 if current_spread >= target_spread:
