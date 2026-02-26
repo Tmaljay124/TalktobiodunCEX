@@ -1083,8 +1083,8 @@ async def delete_opportunity(opportunity_id: str):
 
 # ============== EXECUTE ARBITRAGE ==============
 @api_router.post("/arbitrage/execute")
-async def execute_arbitrage(request: ExecuteArbitrageRequest):
-    """Execute an arbitrage opportunity (real or simulated based on mode)"""
+async def execute_arbitrage(request: ExecuteArbitrageRequest, authenticated: bool = Depends(verify_api_key)):
+    """Execute an arbitrage opportunity (real or simulated based on mode) - REQUIRES AUTHENTICATION"""
     opportunity = await db.arbitrage_opportunities.find_one({"id": request.opportunity_id}, {"_id": 0})
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
@@ -1109,6 +1109,16 @@ async def execute_arbitrage(request: ExecuteArbitrageRequest):
             status_code=400, 
             detail="Live trading requires confirmation. Set 'confirmed: true' to proceed with real trades."
         )
+    
+    # ============== PRE-EXECUTION READINESS CHECK ==============
+    readiness = await check_arbitrage_readiness(opportunity, request.usdt_amount, is_live)
+    if not readiness['ready']:
+        error_msg = "Pre-execution checks failed:\n" + "\n".join(readiness['issues'])
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    logger.info(f"✅ Pre-execution checks passed. Wallet: {readiness['wallet_address']}")
+    if readiness.get('balance_check'):
+        logger.info(f"   BNB: {readiness['balance_check']['bnb_balance']:.4f}, USDT: {readiness['balance_check']['usdt_balance']:.2f}")
     
     # Update status to executing
     await db.arbitrage_opportunities.update_one(
