@@ -734,6 +734,7 @@ async def delete_token(token_id: str):
 @api_router.post("/exchanges")
 async def create_exchange(exchange_data: ExchangeCreate, authenticated: bool = Depends(verify_api_key)):
     """Add a new exchange - REQUIRES AUTHENTICATION"""
+    exchange = Exchange(
         name=exchange_data.name,
         api_key_encrypted=encrypt_data(exchange_data.api_key),
         api_secret_encrypted=encrypt_data(exchange_data.api_secret),
