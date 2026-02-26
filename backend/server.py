@@ -482,6 +482,92 @@ def encrypt_data(data: str) -> str:
 def decrypt_data(encrypted_data: str) -> str:
     return fernet.decrypt(encrypted_data.encode()).decode()
 
+# ============== BALANCE VERIFICATION ==============
+async def verify_wallet_balances(wallet_address: str, usdt_amount: float, is_live: bool = True) -> dict:
+    """
+    Verify wallet has sufficient USDT and BNB for arbitrage execution
+    Returns dict with balance info and validation result
+    """
+    try:
+        # Get current balances
+        bnb_balance = await bsc_service.get_bnb_balance(wallet_address, is_live)
+        usdt_balance = await bsc_service.get_usdt_balance(wallet_address, is_live)
+        
+        # Get minimum BNB requirement from settings
+        settings = await db.settings.find_one({})
+        min_bnb_required = settings.get('min_bnb_for_gas', 0.05) if settings else 0.05
+        
+        # Check if sufficient balances
+        has_enough_usdt = usdt_balance >= usdt_amount
+        has_enough_bnb = bnb_balance >= min_bnb_required
+        
+        return {
+            'valid': has_enough_usdt and has_enough_bnb,
+            'bnb_balance': bnb_balance,
+            'usdt_balance': usdt_balance,
+            'bnb_required': min_bnb_required,
+            'usdt_required': usdt_amount,
+            'bnb_sufficient': has_enough_bnb,
+            'usdt_sufficient': has_enough_usdt,
+            'errors': []
+                if has_enough_usdt and has_enough_bnb
+                else [
+                    f"Insufficient USDT: have {usdt_balance:.2f}, need {usdt_amount:.2f}"
+                    if not has_enough_usdt else None,
+                    f"Insufficient BNB for gas: have {bnb_balance:.4f}, need {min_bnb_required:.4f}"
+                    if not has_enough_bnb else None
+                ]
+        }
+    except Exception as e:
+        logger.error(f"Error verifying wallet balances: {e}")
+        return {
+            'valid': False,
+            'error': str(e),
+            'errors': [f"Failed to fetch balances: {str(e)}"]
+        }
+
+async def check_arbitrage_readiness(opportunity: dict, usdt_amount: float, is_live: bool) -> dict:
+    """
+    Comprehensive pre-execution check for arbitrage readiness
+    Checks: wallet exists, balances sufficient, exchanges configured
+    """
+    issues = []
+    
+    # Check 1: Wallet configured
+    wallet = await db.wallet.find_one({})
+    if not wallet or not wallet.get('address'):
+        issues.append("❌ Wallet not configured. Please add wallet in settings.")
+        return {'ready': False, 'issues': issues}
+    
+    wallet_address = wallet['address']
+    
+    # Check 2: Balances sufficient (only for live mode)
+    if is_live:
+        balance_check = await verify_wallet_balances(wallet_address, usdt_amount, is_live)
+        if not balance_check['valid']:
+            issues.extend([f"❌ {err}" for err in balance_check.get('errors', []) if err])
+    
+    # Check 3: Exchanges configured
+    buy_exchange_doc = await db.exchanges.find_one({'name': opportunity['buy_exchange'], 'is_active': True})
+    sell_exchange_doc = await db.exchanges.find_one({'name': opportunity['sell_exchange'], 'is_active': True})
+    
+    if not buy_exchange_doc:
+        issues.append(f"❌ Buy exchange '{opportunity['buy_exchange']}' not configured or inactive")
+    if not sell_exchange_doc:
+        issues.append(f"❌ Sell exchange '{opportunity['sell_exchange']}' not configured or inactive")
+    
+    # Check 4: Token exists in database
+    token = await db.tokens.find_one({'symbol': opportunity['token_symbol']})
+    if not token:
+        issues.append(f"❌ Token '{opportunity['token_symbol']}' not found in database")
+    
+    return {
+        'ready': len(issues) == 0,
+        'issues': issues,
+        'wallet_address': wallet_address if wallet else None,
+        'balance_check': balance_check if is_live else None
+    }
+
 # ============== EXCHANGE INSTANCES ==============
 exchange_instances: Dict[str, ccxt.Exchange] = {}
 
