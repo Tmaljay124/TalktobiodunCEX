@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -8,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 import json
 import time
@@ -17,6 +18,7 @@ import base64
 import hashlib
 import ccxt.async_support as ccxt
 import httpx
+import jwt
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 from database_helper import create_database
@@ -32,6 +34,14 @@ db_instance, db, IS_MONGODB = create_database()
 # Encryption key for API secrets
 ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key().decode())
 fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
+
+# JWT Authentication
+JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 24
+
+# API Key for simple authentication (alternative to JWT)
+API_KEY = os.environ.get('API_KEY', '')  # Set this in .env for production
 
 # Telegram Bot Token
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -80,10 +90,44 @@ ERC20_ABI = [
 
 app = FastAPI(title="Crypto Arbitrage Bot API", version="2.0.0")
 api_router = APIRouter(prefix="/api")
+security = HTTPBearer()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ============== AUTHENTICATION ==============
+async def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
+    """Verify API key from header"""
+    if not API_KEY:
+        # If no API_KEY set in environment, skip authentication (development mode)
+        logger.warning("⚠️ API_KEY not set - authentication disabled (development mode)")
+        return True
+    
+    if api_key != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key. Please provide valid X-API-Key header."
+        )
+    return True
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify JWT token (alternative to API key)"""
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def create_access_token(data: dict) -> str:
+    """Create JWT token"""
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 # WebSocket connection manager
 class ConnectionManager:
